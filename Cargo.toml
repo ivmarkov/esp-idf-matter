@@ -1,0 +1,29 @@
+[package]
+name = "esp-idf-matter"
+version = "0.1.0"
+authors = ["ivmarkov <ivan.markov@gmail.com>"]
+edition = "2021"
+resolver = "2"
+categories = ["embedded", "hardware-support"]
+keywords = ["embedded", "svc", "idf", "esp-idf", "esp32"]
+description = "Implementation of the embedded-svc traits for ESP-IDF (Espressif's IoT Development Framework)"
+repository = "https://github.com/ivmarkov/esp-idf-matter"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+build = "build.rs"
+#documentation = "https://docs.esp-rs.org/esp-idf-svc/"
+rust-version = "1.77"
+
+[patch.crates-io]
+esp-idf-svc = { path = "../esp-idf-svc" }
+rs-matter = { path = "../rs-matter" }
+
+[features]
+
+[dependencies]
+log = { version = "0.4", default-features = false }
+esp-idf-svc = { version = "0.48", default-features = false, fatures = ["experimental"] }
+rs-matter = { version = "0.1", default-features = false }
+
+[build-dependencies]
+embuild = "0.31.3"

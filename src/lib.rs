@@ -10,7 +10,6 @@
 #[macro_use]
 extern crate std;
 
-//#[cfg(feature = "alloc")]
 #[allow(unused_imports)]
 #[macro_use]
 extern crate alloc;

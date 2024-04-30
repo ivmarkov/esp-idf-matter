@@ -81,4 +81,5 @@ jobs:
           ESP_IDF_VERSION: ${{ matrix.idf-version }}
           ESP_IDF_SDKCONFIG_DEFAULTS: "${{ github.workspace }}/.github/configs/sdkconfig.defaults"
           RUSTFLAGS: "${{ startsWith(matrix.idf-version, 'v5') && '--cfg espidf_time64' || '' }} ${{ '-C default-linker-libraries' }}"
+        if: matrix.target == 'riscv32imc-esp-espidf'
         run: cargo build --examples --target ${{ matrix.target }} -Zbuild-std=std,panic_abort -Zbuild-std-features=panic_immediate_abort

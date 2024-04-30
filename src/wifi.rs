@@ -142,3 +142,12 @@ where
         Ok(())
     }
 }
+
+impl<const N: usize, M> Default for WifiContext<N, M>
+where
+    M: RawMutex,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}

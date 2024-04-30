@@ -91,6 +91,12 @@ impl BtpGattContext {
     }
 }
 
+impl Default for BtpGattContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct BtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,

@@ -351,6 +351,7 @@ mod wifible {
     use crate::{MatterStack, Network};
 
     const MAX_WIFI_NETWORKS: usize = 2;
+    const GATTS_APP_ID: u16 = 0;
 
     pub struct WifiBle {
         btp_context: BtpContext<EspRawMutex>,
@@ -430,7 +431,8 @@ mod wifible {
         {
             info!("Running Matter in commissioning mode (BLE)");
 
-            let peripheral = BtpGattPeripheral::new(bt, &self.network.btp_gatt_context);
+            let peripheral =
+                BtpGattPeripheral::new(GATTS_APP_ID, bt, &self.network.btp_gatt_context);
 
             let btp = Btp::new(peripheral, &self.network.btp_context);
 

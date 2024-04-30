@@ -109,6 +109,7 @@ pub struct BtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,
 {
+    app_id: u16,
     driver: &'a BtDriver<'d, M>,
     context: &'a BtpGattContext,
 }
@@ -118,8 +119,12 @@ where
     M: BleEnabled,
 {
     /// Create a new instance.
-    pub fn new(driver: &'a BtDriver<'d, M>, context: &'a BtpGattContext) -> Self {
-        Self { driver, context }
+    pub fn new(app_id: u16, driver: &'a BtDriver<'d, M>, context: &'a BtpGattContext) -> Self {
+        Self {
+            app_id,
+            driver,
+            context,
+        }
     }
 
     pub async fn run<F>(
@@ -140,7 +145,7 @@ where
 
         unsafe {
             gap.subscribe_nonstatic(|event| {
-                let ctx = GattExecContext::new(&gap, &gatts, self.context);
+                let ctx = GattExecContext::new(self.app_id, &gap, &gatts, self.context);
 
                 ctx.check_esp_status(ctx.on_gap_event(event));
             })?;
@@ -151,7 +156,7 @@ where
 
         unsafe {
             gatts.subscribe_nonstatic(|(gatt_if, event)| {
-                let ctx = GattExecContext::new(&gap, &gatts, self.context);
+                let ctx = GattExecContext::new(self.app_id, &gap, &gatts, self.context);
 
                 ctx.check_esp_status(ctx.on_gatts_event(
                     &service_name,
@@ -165,10 +170,14 @@ where
 
         info!("BLE Gap and Gatts subscriptions initialized");
 
+        gatts.register_app(self.app_id)?;
+
+        info!("Gatts BTP app registered");
+
         loop {
             let mut ind = self.context.ind.lock_if(|ind| !ind.data.is_empty()).await;
 
-            let ctx = GattExecContext::new(&gap, &gatts, self.context);
+            let ctx = GattExecContext::new(self.app_id, &gap, &gatts, self.context);
 
             // TODO: Is this asynchronous?
             ctx.indicate(&ind.data, ind.addr)?;
@@ -231,6 +240,7 @@ where
     T: Borrow<BtDriver<'d, M>>,
     M: BleEnabled,
 {
+    app_id: u16,
     gap: &'a EspBleGap<'d, M, T>,
     gatts: &'a EspGatts<'d, M, T>,
     ctx: &'a BtpGattContext,
@@ -242,11 +252,17 @@ where
     M: BleEnabled,
 {
     fn new(
+        app_id: u16,
         gap: &'a EspBleGap<'d, M, T>,
         gatts: &'a EspGatts<'d, M, T>,
         ctx: &'a BtpGattContext,
     ) -> Self {
-        Self { gap, gatts, ctx }
+        Self {
+            app_id,
+            gap,
+            gatts,
+            ctx,
+        }
     }
 
     fn indicate(&self, data: &[u8], address: BtAddr) -> Result<bool, EspError> {
@@ -294,9 +310,11 @@ where
         F: FnMut(GattPeripheralEvent),
     {
         match event {
-            GattsEvent::ServiceRegistered { status, .. } => {
+            GattsEvent::ServiceRegistered { status, app_id } => {
                 self.check_gatt_status(status)?;
-                self.create_service(gatt_if, service_name, service_adv_data)?;
+                if self.app_id == app_id {
+                    self.create_service(gatt_if, service_name, service_adv_data)?;
+                }
             }
             GattsEvent::ServiceCreated {
                 status,

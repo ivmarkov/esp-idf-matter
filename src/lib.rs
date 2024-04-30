@@ -1,9 +1,24 @@
+#![no_std]
+#![allow(async_fn_in_trait)]
+#![allow(unknown_lints)]
+#![allow(renamed_and_removed_lints)]
+#![allow(clippy::declare_interior_mutable_const)]
+#![warn(clippy::large_futures)]
+
+#[cfg(feature = "std")]
+#[allow(unused_imports)]
+#[macro_use]
+extern crate std;
+
+//#[cfg(feature = "alloc")]
+#[allow(unused_imports)]
+#[macro_use]
+extern crate alloc;
+
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
 use std::net::UdpSocket;
-
-use ble::BtpGattContext;
 
 use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
@@ -14,7 +29,6 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::hal::peripheral::Peripheral;
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
-use esp_idf_svc::netif::EspNetif;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsPartitionId};
 use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
@@ -39,9 +53,7 @@ use rs_matter::{CommissioningData, Matter, MATTER_PORT};
 use wifi::mgmt::WifiManager;
 use wifi::WifiContext;
 
-extern crate alloc;
-
-use crate::ble::BtpGattPeripheral;
+use crate::ble::{BtpGattContext, BtpGattPeripheral};
 use crate::error::Error;
 use crate::multicast::{join_multicast_v4, join_multicast_v6};
 use crate::netif::{get_ips, NetifAccess};
@@ -308,18 +320,6 @@ impl<'a> MatterStack<'a, Eth> {
     }
 }
 
-impl<'d, M> NetifAccess for &Mutex<M, AsyncWifi<&mut EspWifi<'d>>>
-where
-    M: RawMutex,
-{
-    async fn with_netif<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&EspNetif) -> R,
-    {
-        f(self.lock().await.wifi().sta_netif())
-    }
-}
-
 impl<'a> MatterStack<'a, WifiBle> {
     pub const fn root_metadata() -> Endpoint<'static> {
         root_endpoint::endpoint(0)
@@ -329,7 +329,7 @@ impl<'a> MatterStack<'a, WifiBle> {
         root_endpoint::handler(0, self.matter())
     }
 
-    pub async fn is_commissioned(&self, nvs: EspDefaultNvsPartition) -> Result<bool, Error> {
+    pub async fn is_commissioned(&self, _nvs: EspDefaultNvsPartition) -> Result<bool, Error> {
         todo!()
     }
 

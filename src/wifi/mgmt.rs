@@ -3,9 +3,10 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
-
 use embassy_time::{Duration, Timer};
+
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::netif::EspNetif;
 use esp_idf_svc::sys::{EspError, ESP_ERR_INVALID_STATE};
 use esp_idf_svc::wifi::{self as wifi, AsyncWifi, AuthMethod, EspWifi, WifiEvent};
 
@@ -13,7 +14,21 @@ use log::{error, info, warn};
 
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 
+use crate::netif::NetifAccess;
+
 use super::{WifiContext, WifiCredentials, WifiStatus};
+
+impl<'d, M> NetifAccess for &Mutex<M, AsyncWifi<&mut EspWifi<'d>>>
+where
+    M: RawMutex,
+{
+    async fn with_netif<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&EspNetif) -> R,
+    {
+        f(self.lock().await.wifi().sta_netif())
+    }
+}
 
 pub struct WifiManager<'a, 'd, const N: usize, M>
 where
@@ -66,7 +81,7 @@ where
             let mut result = Ok(());
 
             for delay in [2, 5, 10, 20, 30, 60].iter().copied() {
-                result = self.connect(&creds).await;
+                result = self.connect(creds).await;
 
                 if result.is_ok() {
                     break;

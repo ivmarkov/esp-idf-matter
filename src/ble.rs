@@ -1,6 +1,8 @@
 use core::borrow::Borrow;
 use core::cell::RefCell;
 
+use alloc::borrow::ToOwned;
+
 use embassy_sync::blocking_mutex::Mutex;
 
 use enumset::enum_set;
@@ -122,7 +124,7 @@ where
 
         unsafe {
             gap.subscribe_nonstatic(|event| {
-                let ctx = GattExecContext::new(&gap, &gatts, &self.context);
+                let ctx = GattExecContext::new(&gap, &gatts, self.context);
 
                 ctx.check_esp_status(ctx.on_gap_event(event));
             })?;
@@ -133,7 +135,7 @@ where
 
         unsafe {
             gatts.subscribe_nonstatic(|(gatt_if, event)| {
-                let ctx = GattExecContext::new(&gap, &gatts, &self.context);
+                let ctx = GattExecContext::new(&gap, &gatts, self.context);
 
                 ctx.check_esp_status(ctx.on_gatts_event(
                     &service_name,
@@ -148,7 +150,7 @@ where
         loop {
             let mut ind = self.context.ind.lock_if(|ind| ind.data.is_empty()).await;
 
-            let ctx = GattExecContext::new(&gap, &gatts, &self.context);
+            let ctx = GattExecContext::new(&gap, &gatts, self.context);
 
             // TODO: Is this asynchronous?
             ctx.indicate(&ind.data, ind.addr)?;

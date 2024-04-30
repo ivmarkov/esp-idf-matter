@@ -1,18 +1,16 @@
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
-
 use embassy_time::{Duration, Timer};
-use embedded_svc::wifi::asynch::Wifi;
+
 use esp_idf_svc::eth::{AsyncEth, EspEth};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::netif::{EspNetif, IpEvent};
 use esp_idf_svc::sys::{esp, esp_netif_get_ip6_linklocal, EspError, ESP_FAIL};
-use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
 
 use log::info;
 
@@ -102,26 +100,6 @@ where
         f(eth.eth().netif())
     }
 }
-
-// pub struct WifiNetifAccess<'a, M, T>(pub &'a Mutex<M, T>)
-// where
-//     M: RawMutex,
-//     T: Wifi;
-
-// impl<'a, M, T> NetifAccess for WifiNetifAccess<'a, M, T>
-// where
-//     M: RawMutex,
-//     T: Wifi,
-// {
-//     async fn with_netif<F, R>(&self, f: F) -> R
-//     where
-//         F: FnOnce(&EspNetif) -> R,
-//     {
-//         let wifi = self.0.lock().await;
-
-//         f(wifi.wifi().sta_netif())
-//     }
-// }
 
 pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr), Error> {
     let ip_info = netif.get_ip_info()?;

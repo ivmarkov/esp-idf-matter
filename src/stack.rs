@@ -1,46 +1,44 @@
-#![cfg(feature = "std")]
-
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3};
+use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
-use embassy_sync::mutex::Mutex;
 
-use esp_idf_svc::bt::{Ble, BleEnabled, BtDriver};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::modem::Modem;
-use esp_idf_svc::hal::peripheral::Peripheral;
-use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsPartitionId};
-use esp_idf_svc::timer::EspTaskTimerService;
-use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
+use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsPartitionId};
 
 use log::info;
 
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
-use rs_matter::data_model::root_endpoint::{self, RootEndpointHandler};
+use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::error::ErrorCode;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
 use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::{CommissioningData, Matter, MATTER_PORT};
 
-use crate::ble::{BtpGattContext, BtpGattPeripheral};
 use crate::error::Error;
 use crate::multicast::{join_multicast_v4, join_multicast_v6};
 use crate::netif::{get_ips, NetifAccess};
 use crate::nvs;
-use crate::wifi::mgmt::WifiManager;
-use crate::wifi::WifiContext;
+
+#[cfg(all(
+    not(esp32h2),
+    not(esp32s2),
+    esp_idf_comp_esp_wifi_enabled,
+    esp_idf_comp_esp_event_enabled,
+    not(esp_idf_btdm_ctrl_mode_br_edr_only),
+    esp_idf_bt_enabled,
+    esp_idf_bt_bluedroid_enabled
+))]
+pub use wifible::*;
 
 pub trait Network {
     const INIT: Self;
@@ -50,26 +48,6 @@ pub struct Eth(());
 
 impl Network for Eth {
     const INIT: Self = Self(());
-}
-
-pub struct WifiBle {
-    btp_context: BtpContext<EspRawMutex>,
-    btp_gatt_context: BtpGattContext,
-    wifi_context: WifiContext<3, NoopRawMutex>,
-}
-
-impl WifiBle {
-    const fn new() -> Self {
-        Self {
-            btp_context: BtpContext::new(),
-            btp_gatt_context: BtpGattContext::new(),
-            wifi_context: WifiContext::new(),
-        }
-    }
-}
-
-impl Network for WifiBle {
-    const INIT: Self = Self::new();
 }
 
 pub struct MatterStack<'a, T>
@@ -296,110 +274,173 @@ impl<'a> MatterStack<'a, Eth> {
     }
 }
 
-impl<'a> MatterStack<'a, WifiBle> {
-    pub const fn root_metadata() -> Endpoint<'static> {
-        root_endpoint::endpoint(0)
+#[cfg(all(
+    not(esp32h2),
+    not(esp32s2),
+    esp_idf_comp_esp_wifi_enabled,
+    esp_idf_comp_esp_event_enabled,
+    not(esp_idf_btdm_ctrl_mode_br_edr_only),
+    esp_idf_bt_enabled,
+    esp_idf_bt_bluedroid_enabled
+))]
+mod wifible {
+    use core::pin::pin;
+
+    use embassy_futures::select::select;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use embassy_sync::mutex::Mutex;
+
+    use esp_idf_svc::bt::{Ble, BleEnabled, BtDriver};
+    use esp_idf_svc::eventloop::EspSystemEventLoop;
+    use esp_idf_svc::hal::modem::Modem;
+    use esp_idf_svc::hal::peripheral::Peripheral;
+    use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
+    use esp_idf_svc::nvs::EspDefaultNvsPartition;
+    use esp_idf_svc::timer::EspTaskTimerService;
+    use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
+
+    use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint};
+    use rs_matter::data_model::root_endpoint::{self, RootEndpointHandler};
+    use rs_matter::pairing::DiscoveryCapabilities;
+    use rs_matter::transport::network::btp::{Btp, BtpContext};
+    use rs_matter::utils::select::Coalesce;
+    use rs_matter::CommissioningData;
+
+    use crate::ble::{BtpGattContext, BtpGattPeripheral};
+    use crate::error::Error;
+    use crate::wifi::mgmt::WifiManager;
+    use crate::wifi::WifiContext;
+    use crate::{MatterStack, Network};
+
+    pub struct WifiBle {
+        btp_context: BtpContext<EspRawMutex>,
+        btp_gatt_context: BtpGattContext,
+        wifi_context: WifiContext<3, NoopRawMutex>,
     }
 
-    pub fn root_handler(&self) -> RootEndpointHandler<'_> {
-        root_endpoint::handler(0, self.matter())
-    }
-
-    pub async fn is_commissioned(&self, _nvs: EspDefaultNvsPartition) -> Result<bool, Error> {
-        todo!()
-    }
-
-    pub async fn operate<'d, T>(
-        &self,
-        sysloop: EspSystemEventLoop,
-        timer_service: EspTaskTimerService,
-        nvs: EspDefaultNvsPartition,
-        wifi: &mut EspWifi<'d>,
-        handler: T,
-    ) -> Result<(), Error>
-    where
-        T: AsyncHandler + AsyncMetadata,
-    {
-        let wifi =
-            Mutex::<NoopRawMutex, _>::new(AsyncWifi::wrap(wifi, sysloop.clone(), timer_service)?);
-
-        let mgr = WifiManager::new(&wifi, &self.network.wifi_context, sysloop.clone());
-
-        let mut main = pin!(self.run_with_netif(sysloop, nvs, &wifi, None, handler));
-        let mut wifi = pin!(mgr.run());
-
-        select(&mut wifi, &mut main).coalesce().await
-    }
-
-    pub async fn commission<'d, T, M>(
-        &'static self,
-        nvs: EspDefaultNvsPartition,
-        bt: &BtDriver<'d, M>,
-        dev_comm: CommissioningData,
-        handler: T,
-    ) -> Result<(), Error>
-    where
-        T: AsyncHandler + AsyncMetadata,
-        M: BleEnabled,
-    {
-        let peripheral = BtpGattPeripheral::new(bt, &self.network.btp_gatt_context);
-
-        let btp = Btp::new(peripheral, &self.network.btp_context);
-
-        let mut ble = pin!(async {
-            btp.run("BT", self.matter().dev_det(), &dev_comm)
-                .await
-                .map_err(Into::into)
-        });
-        let mut main = pin!(self.run_once(
-            &btp,
-            &btp,
-            nvs,
-            Some((
-                dev_comm.clone(),
-                DiscoveryCapabilities::new(false, true, false)
-            )),
-            &handler
-        ));
-
-        select(&mut ble, &mut main).coalesce().await
-    }
-
-    pub async fn run<'d, T>(
-        &'static self,
-        sysloop: EspSystemEventLoop,
-        timer_service: EspTaskTimerService,
-        nvs: EspDefaultNvsPartition,
-        mut modem: impl Peripheral<P = Modem> + 'd,
-        dev_comm: CommissioningData,
-        handler: T,
-    ) -> Result<(), Error>
-    where
-        T: AsyncHandler + AsyncMetadata,
-    {
-        loop {
-            if !self.is_commissioned(nvs.clone()).await? {
-                let bt = BtDriver::<Ble>::new(&mut modem, Some(nvs.clone()))?;
-
-                let mut main = pin!(self.commission(nvs.clone(), &bt, dev_comm.clone(), &handler));
-                let mut wait_network_connect =
-                    pin!(self.network.wifi_context.wait_network_connect());
-
-                select(&mut main, &mut wait_network_connect)
-                    .coalesce()
-                    .await?;
+    impl WifiBle {
+        const fn new() -> Self {
+            Self {
+                btp_context: BtpContext::new(),
+                btp_gatt_context: BtpGattContext::new(),
+                wifi_context: WifiContext::new(),
             }
+        }
+    }
 
-            let mut wifi = EspWifi::new(&mut modem, sysloop.clone(), Some(nvs.clone()))?;
+    impl Network for WifiBle {
+        const INIT: Self = Self::new();
+    }
 
-            self.operate(
+    impl<'a> MatterStack<'a, WifiBle> {
+        pub const fn root_metadata() -> Endpoint<'static> {
+            root_endpoint::endpoint(0)
+        }
+
+        pub fn root_handler(&self) -> RootEndpointHandler<'_> {
+            root_endpoint::handler(0, self.matter())
+        }
+
+        pub async fn is_commissioned(&self, _nvs: EspDefaultNvsPartition) -> Result<bool, Error> {
+            todo!()
+        }
+
+        pub async fn operate<'d, T>(
+            &self,
+            sysloop: EspSystemEventLoop,
+            timer_service: EspTaskTimerService,
+            nvs: EspDefaultNvsPartition,
+            wifi: &mut EspWifi<'d>,
+            handler: T,
+        ) -> Result<(), Error>
+        where
+            T: AsyncHandler + AsyncMetadata,
+        {
+            let wifi = Mutex::<NoopRawMutex, _>::new(AsyncWifi::wrap(
+                wifi,
                 sysloop.clone(),
-                timer_service.clone(),
-                nvs.clone(),
-                &mut wifi,
-                &handler,
-            )
-            .await?;
+                timer_service,
+            )?);
+
+            let mgr = WifiManager::new(&wifi, &self.network.wifi_context, sysloop.clone());
+
+            let mut main = pin!(self.run_with_netif(sysloop, nvs, &wifi, None, handler));
+            let mut wifi = pin!(mgr.run());
+
+            select(&mut wifi, &mut main).coalesce().await
+        }
+
+        pub async fn commission<'d, T, M>(
+            &'static self,
+            nvs: EspDefaultNvsPartition,
+            bt: &BtDriver<'d, M>,
+            dev_comm: CommissioningData,
+            handler: T,
+        ) -> Result<(), Error>
+        where
+            T: AsyncHandler + AsyncMetadata,
+            M: BleEnabled,
+        {
+            let peripheral = BtpGattPeripheral::new(bt, &self.network.btp_gatt_context);
+
+            let btp = Btp::new(peripheral, &self.network.btp_context);
+
+            let mut ble = pin!(async {
+                btp.run("BT", self.matter().dev_det(), &dev_comm)
+                    .await
+                    .map_err(Into::into)
+            });
+            let mut main = pin!(self.run_once(
+                &btp,
+                &btp,
+                nvs,
+                Some((
+                    dev_comm.clone(),
+                    DiscoveryCapabilities::new(false, true, false)
+                )),
+                &handler
+            ));
+
+            select(&mut ble, &mut main).coalesce().await
+        }
+
+        pub async fn run<'d, T>(
+            &'static self,
+            sysloop: EspSystemEventLoop,
+            timer_service: EspTaskTimerService,
+            nvs: EspDefaultNvsPartition,
+            mut modem: impl Peripheral<P = Modem> + 'd,
+            dev_comm: CommissioningData,
+            handler: T,
+        ) -> Result<(), Error>
+        where
+            T: AsyncHandler + AsyncMetadata,
+        {
+            loop {
+                if !self.is_commissioned(nvs.clone()).await? {
+                    let bt = BtDriver::<Ble>::new(&mut modem, Some(nvs.clone()))?;
+
+                    let mut main =
+                        pin!(self.commission(nvs.clone(), &bt, dev_comm.clone(), &handler));
+                    let mut wait_network_connect =
+                        pin!(self.network.wifi_context.wait_network_connect());
+
+                    select(&mut main, &mut wait_network_connect)
+                        .coalesce()
+                        .await?;
+                }
+
+                let mut wifi = EspWifi::new(&mut modem, sysloop.clone(), Some(nvs.clone()))?;
+
+                self.operate(
+                    sysloop.clone(),
+                    timer_service.clone(),
+                    nvs.clone(),
+                    &mut wifi,
+                    &handler,
+                )
+                .await?;
+            }
         }
     }
 }

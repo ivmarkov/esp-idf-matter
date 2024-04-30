@@ -1,3 +1,5 @@
+#![cfg(esp_idf_comp_nvs_flash_enabled)]
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};

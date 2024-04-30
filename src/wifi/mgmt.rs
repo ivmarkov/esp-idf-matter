@@ -1,3 +1,9 @@
+#![cfg(all(
+    not(esp32h2),
+    esp_idf_comp_esp_wifi_enabled,
+    esp_idf_comp_esp_event_enabled,
+))]
+
 use core::pin::pin;
 
 use embassy_futures::select::select;

@@ -1,12 +1,11 @@
+#![cfg(all(esp_idf_comp_esp_netif_enabled, esp_idf_comp_esp_event_enabled))]
+
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_svc::eth::{AsyncEth, EspEth};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::netif::{EspNetif, IpEvent};
@@ -65,42 +64,6 @@ where
     }
 }
 
-impl<'d, T> NetifAccess for &mut EspEth<'d, T> {
-    async fn with_netif<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&EspNetif) -> R,
-    {
-        f(self.netif())
-    }
-}
-
-impl<'d, T> NetifAccess for AsyncEth<EspEth<'d, T>> {
-    async fn with_netif<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&EspNetif) -> R,
-    {
-        f(self.eth().netif())
-    }
-}
-
-pub struct EthNetifAccess<'a, 'd, M, T>(pub &'a Mutex<M, AsyncEth<EspEth<'d, T>>>)
-where
-    M: RawMutex;
-
-impl<'a, 'd, M, T> NetifAccess for EthNetifAccess<'a, 'd, M, T>
-where
-    M: RawMutex,
-{
-    async fn with_netif<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&EspNetif) -> R,
-    {
-        let eth = self.0.lock().await;
-
-        f(eth.eth().netif())
-    }
-}
-
 pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr), Error> {
     let ip_info = netif.get_ip_info()?;
 
@@ -136,4 +99,41 @@ pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr), Error> {
     .into();
 
     Ok((ipv4, ipv6))
+}
+
+#[cfg(esp_idf_comp_esp_eth_enabled)]
+#[cfg(any(
+    all(esp32, esp_idf_eth_use_esp32_emac),
+    any(
+        esp_idf_eth_spi_ethernet_dm9051,
+        esp_idf_eth_spi_ethernet_w5500,
+        esp_idf_eth_spi_ethernet_ksz8851snl
+    ),
+    esp_idf_eth_use_openeth
+))]
+pub mod eth {
+    use esp_idf_svc::{
+        eth::{AsyncEth, EspEth},
+        netif::EspNetif,
+    };
+
+    use super::NetifAccess;
+
+    impl<'d, T> NetifAccess for EspEth<'d, T> {
+        async fn with_netif<F, R>(&self, f: F) -> R
+        where
+            F: FnOnce(&EspNetif) -> R,
+        {
+            f(self.netif())
+        }
+    }
+
+    impl<'d, T> NetifAccess for AsyncEth<EspEth<'d, T>> {
+        async fn with_netif<F, R>(&self, f: F) -> R
+        where
+            F: FnOnce(&EspNetif) -> R,
+        {
+            f(self.eth().netif())
+        }
+    }
 }

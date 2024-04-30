@@ -1,3 +1,10 @@
+#![cfg(all(
+    not(esp_idf_btdm_ctrl_mode_br_edr_only),
+    esp_idf_bt_enabled,
+    esp_idf_bt_bluedroid_enabled,
+    not(esp32s2)
+))]
+
 use core::borrow::Borrow;
 use core::cell::RefCell;
 

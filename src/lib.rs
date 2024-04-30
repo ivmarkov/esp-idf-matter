@@ -16,8 +16,12 @@ extern crate std;
 extern crate alloc;
 
 pub use error::*;
-
-#[cfg(feature = "std")]
+#[cfg(all(
+    feature = "std",
+    esp_idf_comp_nvs_flash_enabled,
+    esp_idf_comp_esp_netif_enabled,
+    esp_idf_comp_esp_event_enabled
+))]
 pub use stack::*;
 
 pub mod ble;
@@ -26,5 +30,11 @@ pub mod mdns;
 pub mod multicast;
 pub mod netif;
 pub mod nvs;
+#[cfg(all(
+    feature = "std",
+    esp_idf_comp_nvs_flash_enabled,
+    esp_idf_comp_esp_netif_enabled,
+    esp_idf_comp_esp_event_enabled
+))]
 mod stack;
 pub mod wifi;

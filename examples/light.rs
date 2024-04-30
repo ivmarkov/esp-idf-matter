@@ -58,6 +58,7 @@ fn main() -> Result<(), Error> {
     // w.r.t. stack usage in async functions
     let matter = pin!(stack.run(
         EspSystemEventLoop::take()?, // The Matter stack needs (a clone of) the system event loop
+        EspTimerService::take()?,    // The Matter stack needs (a clone of) the timer service
         EspDefaultNvsPartition::take()?, // The Matter stack needs (a clone of) the default ESP IDF NVS partition too
         Peripherals::take()?.modem,      // The Matter stack needs the BT/Wifi modem peripheral
         CommissioningData {
@@ -95,6 +96,7 @@ fn main() -> Result<(), Error> {
 }
 
 /// The Matter stack is allocated statically to avoid program stack blowups
+/// It is also a mandatory requirement when the `WifiBle` stack variation is used
 static MATTER_STACK: ConstStaticCell<MatterStack<WifiBle>> =
     ConstStaticCell::new(MatterStack::new(
         &BasicInfoConfig {

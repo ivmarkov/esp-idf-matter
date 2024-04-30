@@ -32,6 +32,7 @@ enumset = { version = "1", default-features = false }
 strum = { version = "0.26", default-features = false, features = ["derive"] }
 embassy-futures = "0.1"
 embassy-sync = "0.5"
+embassy-time = { version = "0.3", features = ["generic-queue"] }
 esp-idf-svc = { version = "0.48", default-features = false, features = ["alloc", "embassy-sync", "embassy-time-driver", "experimental"] }
 embedded-svc = { version = "0.27", default-features = false }
 rs-matter = { version = "0.1", default-features = false }

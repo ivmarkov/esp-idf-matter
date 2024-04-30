@@ -5,6 +5,7 @@ use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
 
+use embassy_time::{Duration, Timer};
 use embedded_svc::wifi::asynch::Wifi;
 use esp_idf_svc::eth::{AsyncEth, EspEth};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -22,34 +23,22 @@ pub trait NetifAccess {
     where
         F: FnOnce(&EspNetif) -> R;
 
-    async fn wait_ips_up(
-        &self,
-        sysloop: EspSystemEventLoop,
-    ) -> Result<(Ipv4Addr, Ipv6Addr), Error> {
+    async fn wait<F, R>(&self, sysloop: EspSystemEventLoop, mut f: F) -> Result<R, Error>
+    where
+        F: FnMut(&EspNetif) -> Result<Option<R>, Error>,
+    {
         // TODO: Maybe wait on Wifi and Eth events as well
         let mut subscription = sysloop.subscribe_async::<IpEvent>()?;
 
         loop {
-            let events = pin!(subscription.recv());
-            let ips = pin!(self.with_netif(get_ips));
-
-            if let Either::Second(Ok(result)) = select(events, ips).await {
+            if let Some(result) = self.with_netif(&mut f).await? {
                 break Ok(result);
             }
-        }
-    }
 
-    async fn wait_ips_down(&self, sysloop: EspSystemEventLoop) -> Result<(), Error> {
-        // TODO: Maybe wait on Wifi and Eth events as well
-        let mut subscription = sysloop.subscribe_async::<IpEvent>()?;
+            let mut events = pin!(subscription.recv());
+            let mut timer = pin!(Timer::after(Duration::from_secs(5)));
 
-        loop {
-            let events = pin!(subscription.recv());
-            let ips = pin!(self.with_netif(get_ips));
-
-            if let Either::Second(Err(_)) = select(events, ips).await {
-                break Ok(());
-            }
+            select(&mut events, &mut timer).await;
         }
     }
 }

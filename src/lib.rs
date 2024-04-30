@@ -1,39 +1,29 @@
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
-use std::io;
 use std::net::UdpSocket;
 
-use async_io::Async;
 use ble::BtpGattContext;
-use embassy_futures::select::{select, select3, select4};
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
+use embassy_futures::select::{select, select3};
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::mutex::Mutex;
+
 use esp_idf_svc::bt::{Ble, BleEnabled, BtDriver};
-use esp_idf_svc::eth::{AsyncEth, EspEth};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::modem::{
-    BluetoothModem, BluetoothModemPeripheral, Modem, WifiModem, WifiModemPeripheral,
-};
+use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::hal::peripheral::Peripheral;
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
-use esp_idf_svc::handle::RawHandle;
-use esp_idf_svc::netif::{EspNetif, NetifConfiguration, NetifStack};
+use esp_idf_svc::netif::EspNetif;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsPartitionId};
-
-use esp_idf_svc::sys::{esp, esp_netif_get_ip6_linklocal, EspError, ESP_FAIL};
-
 use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
+
 use log::info;
 
-use netif::{EthNetifAccess, NetifAccess};
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::core::IMBuffer;
-use rs_matter::data_model::objects::{
-    AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat, Metadata,
-};
+use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
 use rs_matter::data_model::root_endpoint::{self, RootEndpointHandler};
 use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use rs_matter::data_model::subscriptions::Subscriptions;
@@ -46,13 +36,15 @@ use rs_matter::transport::network::{NetworkReceive, NetworkSend};
 use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::{CommissioningData, Matter, MATTER_PORT};
-use wifi::{Wifi, WifiManager};
+use wifi::mgmt::WifiManager;
+use wifi::WifiContext;
 
 extern crate alloc;
 
-use crate::ble::BluedroidGattPeripheral;
+use crate::ble::BtpGattPeripheral;
 use crate::error::Error;
 use crate::multicast::{join_multicast_v4, join_multicast_v6};
+use crate::netif::{get_ips, NetifAccess};
 
 pub mod ble;
 pub mod error;
@@ -75,7 +67,7 @@ impl Network for Eth {
 pub struct WifiBle {
     btp_context: BtpContext<EspRawMutex>,
     btp_gatt_context: BtpGattContext,
-    wifi_manager: WifiManager<3, NoopRawMutex>,
+    wifi_context: WifiContext<3, NoopRawMutex>,
 }
 
 impl WifiBle {
@@ -83,7 +75,7 @@ impl WifiBle {
         Self {
             btp_context: BtpContext::new(),
             btp_gatt_context: BtpGattContext::new(),
-            wifi_manager: WifiManager::new(),
+            wifi_context: WifiContext::new(),
         }
     }
 }
@@ -152,14 +144,21 @@ where
         N: NetifAccess,
     {
         loop {
-            let (ipv4, ipv6) = netif.wait_ips_up(sysloop.clone()).await?;
+            let (ipv4, ipv6) = netif
+                .wait(sysloop.clone(), |netif| Ok(get_ips(netif).ok()))
+                .await?;
 
             let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
             let mut main =
                 pin!(self.run_once(&socket, &socket, nvs.clone(), dev_comm.clone(), &handler));
             let mut mdns = pin!(self.run_builtin_mdns(ipv4, ipv6));
-            let mut down = pin!(netif.wait_ips_down(sysloop.clone()));
+            let mut down = pin!(netif.wait(sysloop.clone(), |netif| {
+                let prev = Some((ipv4, ipv6));
+                let next = get_ips(netif).ok();
+
+                Ok((prev != next).then_some(()))
+            }));
 
             select3(&mut main, &mut mdns, &mut down).coalesce().await?;
         }
@@ -326,7 +325,7 @@ impl<'a> MatterStack<'a, WifiBle> {
         root_endpoint::endpoint(0)
     }
 
-    pub fn root_handler(&self, wifi: &Wifi<'_, NoopRawMutex>) -> RootEndpointHandler<'_> {
+    pub fn root_handler(&self) -> RootEndpointHandler<'_> {
         root_endpoint::handler(0, self.matter())
     }
 
@@ -348,8 +347,10 @@ impl<'a> MatterStack<'a, WifiBle> {
         let wifi =
             Mutex::<NoopRawMutex, _>::new(AsyncWifi::wrap(wifi, sysloop.clone(), timer_service)?);
 
+        let mgr = WifiManager::new(&wifi, &self.network.wifi_context, sysloop.clone());
+
         let mut main = pin!(self.run_with_netif(sysloop, nvs, &wifi, None, handler));
-        let mut wifi = pin!(self.network.wifi_manager.run(&wifi));
+        let mut wifi = pin!(mgr.run());
 
         select(&mut wifi, &mut main).coalesce().await
     }
@@ -365,7 +366,7 @@ impl<'a> MatterStack<'a, WifiBle> {
         T: AsyncHandler + AsyncMetadata,
         M: BleEnabled,
     {
-        let peripheral = BluedroidGattPeripheral::new(&self.network.btp_gatt_context, bt);
+        let peripheral = BtpGattPeripheral::new(bt, &self.network.btp_gatt_context);
 
         let btp = Btp::new(peripheral, &self.network.btp_context);
 
@@ -406,7 +407,7 @@ impl<'a> MatterStack<'a, WifiBle> {
 
                 let mut main = pin!(self.commission(nvs.clone(), &bt, dev_comm.clone(), &handler));
                 let mut wait_network_connect =
-                    pin!(self.network.wifi_manager.wait_network_connect());
+                    pin!(self.network.wifi_context.wait_network_connect());
 
                 select(&mut main, &mut wait_network_connect)
                     .coalesce()

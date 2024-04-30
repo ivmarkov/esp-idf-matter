@@ -23,43 +23,61 @@ use rs_matter::transport::network::btp::{
     C2_CHARACTERISTIC_UUID, C2_MAX_LEN, MATTER_BLE_SERVICE_UUID16, MAX_BTP_SESSIONS,
 };
 use rs_matter::transport::network::BtAddr;
+use rs_matter::utils::ifmutex::IfMutex;
 
 use crate::error::Error;
 
 const MAX_CONNECTIONS: usize = MAX_BTP_SESSIONS;
 
-struct ConnState {
+#[derive(Debug, Clone)]
+struct Connection {
     peer: BdAddr,
     conn_id: Handle,
     subscribed: bool,
     mtu: Option<u16>,
 }
 
-struct GattsState {
+#[derive(Debug, Clone)]
+struct State {
     gatt_if: Option<GattInterface>,
     service_handle: Option<Handle>,
     c1_handle: Option<Handle>,
     c2_handle: Option<Handle>,
     c2_cccd_handle: Option<Handle>,
-    connections: heapless::Vec<ConnState, MAX_CONNECTIONS>,
+    connections: heapless::Vec<Connection, MAX_CONNECTIONS>,
 }
 
-pub struct BtpGattContext(Mutex<EspRawMutex, RefCell<GattsState>>);
+#[derive(Debug, Clone)]
+struct IndBuffer {
+    addr: BtAddr,
+    data: heapless::Vec<u8, 512>,
+}
+
+pub struct BtpGattContext {
+    state: Mutex<EspRawMutex, RefCell<State>>,
+    ind: IfMutex<EspRawMutex, IndBuffer>,
+}
 
 impl BtpGattContext {
     pub const fn new() -> Self {
-        Self(Mutex::new(RefCell::new(GattsState {
-            gatt_if: None,
-            service_handle: None,
-            c1_handle: None,
-            c2_handle: None,
-            c2_cccd_handle: None,
-            connections: heapless::Vec::new(),
-        })))
+        Self {
+            state: Mutex::new(RefCell::new(State {
+                gatt_if: None,
+                service_handle: None,
+                c1_handle: None,
+                c2_handle: None,
+                c2_cccd_handle: None,
+                connections: heapless::Vec::new(),
+            })),
+            ind: IfMutex::new(IndBuffer {
+                addr: BtAddr([0; 6]),
+                data: heapless::Vec::new(),
+            }),
+        }
     }
 
     pub fn reset(&self) {
-        self.0.lock(|state| {
+        self.state.lock(|state| {
             let mut state = state.borrow_mut();
 
             state.gatt_if = None;
@@ -71,18 +89,134 @@ impl BtpGattContext {
     }
 }
 
-/// Implements the `GattPeripheral` trait using the ESP-IDF Bluedroid GATT stack.
-struct PeripheralState<'a, 'd, M, T>
+pub struct BtpGattPeripheral<'a, 'd, M>
+where
+    M: BleEnabled,
+{
+    driver: &'a BtDriver<'d, M>,
+    context: &'a BtpGattContext,
+}
+
+impl<'a, 'd, M> BtpGattPeripheral<'a, 'd, M>
+where
+    M: BleEnabled,
+{
+    /// Create a new instance.
+    pub fn new(driver: &'a BtDriver<'d, M>, context: &'a BtpGattContext) -> Self {
+        Self { driver, context }
+    }
+
+    pub async fn run<F>(
+        &self,
+        service_name: &str,
+        service_adv_data: &AdvData,
+        mut callback: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(GattPeripheralEvent) + Send + 'd,
+    {
+        let _pin = service_adv_data.pin();
+
+        let gap = EspBleGap::new(self.driver)?;
+        let gatts = EspGatts::new(self.driver)?;
+
+        unsafe {
+            gap.subscribe_nonstatic(|event| {
+                let ctx = GattExecContext::new(&gap, &gatts, &self.context);
+
+                ctx.check_esp_status(ctx.on_gap_event(event));
+            })?;
+        }
+
+        let adv_data = service_adv_data.clone();
+        let service_name = service_name.to_owned();
+
+        unsafe {
+            gatts.subscribe_nonstatic(|(gatt_if, event)| {
+                let ctx = GattExecContext::new(&gap, &gatts, &self.context);
+
+                ctx.check_esp_status(ctx.on_gatts_event(
+                    &service_name,
+                    &adv_data,
+                    gatt_if,
+                    event,
+                    &mut callback,
+                ))
+            })?;
+        }
+
+        loop {
+            let mut ind = self.context.ind.lock_if(|ind| ind.data.is_empty()).await;
+
+            let ctx = GattExecContext::new(&gap, &gatts, &self.context);
+
+            // TODO: Is this asynchronous?
+            ctx.indicate(&ind.data, ind.addr)?;
+
+            ind.data.clear();
+        }
+    }
+
+    /// Indicate new data on characteristic `C2` to a remote peer.
+    pub async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), Error> {
+        self.context
+            .ind
+            .with(|ind| {
+                if ind.data.is_empty() {
+                    ind.data.extend_from_slice(data).unwrap();
+                    ind.addr = address;
+
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .await;
+
+        Ok(())
+    }
+}
+
+impl<'a, 'd, M> GattPeripheral for BtpGattPeripheral<'a, 'd, M>
+where
+    M: BleEnabled,
+{
+    async fn run<F>(
+        &self,
+        service_name: &str,
+        adv_data: &AdvData,
+        callback: F,
+    ) -> Result<(), rs_matter::error::Error>
+    where
+        F: FnMut(GattPeripheralEvent) + Send + Clone + 'static,
+    {
+        BtpGattPeripheral::run(self, service_name, adv_data, callback)
+            .await
+            .map_err(|_| ErrorCode::BtpError)?;
+
+        Ok(())
+    }
+
+    async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), rs_matter::error::Error> {
+        BtpGattPeripheral::indicate(self, data, address)
+            .await
+            .map_err(|_| ErrorCode::BtpError)?;
+
+        Ok(())
+    }
+}
+
+struct GattExecContext<'a, 'd, M, T>
 where
     T: Borrow<BtDriver<'d, M>>,
     M: BleEnabled,
 {
     gap: &'a EspBleGap<'d, M, T>,
     gatts: &'a EspGatts<'d, M, T>,
-    state: &'a BtpGattContext,
+    ctx: &'a BtpGattContext,
 }
 
-impl<'a, 'd, M, T> PeripheralState<'a, 'd, M, T>
+impl<'a, 'd, M, T> GattExecContext<'a, 'd, M, T>
 where
     T: Borrow<BtDriver<'d, M>> + Clone,
     M: BleEnabled,
@@ -90,13 +224,13 @@ where
     fn new(
         gap: &'a EspBleGap<'d, M, T>,
         gatts: &'a EspGatts<'d, M, T>,
-        state: &'a BtpGattContext,
+        ctx: &'a BtpGattContext,
     ) -> Self {
-        Self { gap, gatts, state }
+        Self { gap, gatts, ctx }
     }
 
     fn indicate(&self, data: &[u8], address: BtAddr) -> Result<bool, EspError> {
-        let conn = self.state.0.lock(|state| {
+        let conn = self.ctx.state.lock(|state| {
             let state = state.borrow();
 
             let gatts_if = state.gatt_if?;
@@ -253,7 +387,7 @@ where
         service_name: &str,
         service_adv_data: &AdvData,
     ) -> Result<(), EspError> {
-        self.state.0.lock(|state| {
+        self.ctx.state.lock(|state| {
             state.borrow_mut().gatt_if = Some(gatt_if);
         });
 
@@ -279,7 +413,7 @@ where
     }
 
     fn delete_service(&self, service_handle: Handle) -> Result<(), EspError> {
-        self.state.0.lock(|state| {
+        self.ctx.state.lock(|state| {
             if state.borrow().service_handle == Some(service_handle) {
                 state.borrow_mut().c1_handle = None;
                 state.borrow_mut().c2_handle = None;
@@ -291,7 +425,7 @@ where
     }
 
     fn unregister_service(&self, service_handle: Handle) -> Result<(), EspError> {
-        self.state.0.lock(|state| {
+        self.ctx.state.lock(|state| {
             if state.borrow().service_handle == Some(service_handle) {
                 state.borrow_mut().gatt_if = None;
                 state.borrow_mut().service_handle = None;
@@ -302,7 +436,7 @@ where
     }
 
     fn configure_and_start_service(&self, service_handle: Handle) -> Result<(), EspError> {
-        self.state.0.lock(|state| {
+        self.ctx.state.lock(|state| {
             state.borrow_mut().service_handle = Some(service_handle);
         });
 
@@ -346,7 +480,7 @@ where
         attr_handle: Handle,
         char_uuid: BtUuid,
     ) -> Result<(), EspError> {
-        let c2 = self.state.0.lock(|state| {
+        let c2 = self.ctx.state.lock(|state| {
             if state.borrow().service_handle != Some(service_handle) {
                 return false;
             }
@@ -383,7 +517,7 @@ where
         attr_handle: Handle,
         descr_uuid: BtUuid,
     ) -> Result<(), EspError> {
-        self.state.0.lock(|state| {
+        self.ctx.state.lock(|state| {
             if descr_uuid == BtUuid::uuid16(0x2902) && state.borrow().c2_handle == Some(attr_handle)
             {
                 state.borrow_mut().c2_cccd_handle = Some(service_handle);
@@ -394,7 +528,7 @@ where
     }
 
     fn register_conn_mtu(&self, conn_id: ConnectionId, mtu: u16) -> Result<(), EspError> {
-        self.state.0.lock(|state| {
+        self.ctx.state.lock(|state| {
             let mut state = state.borrow_mut();
             if let Some(conn) = state
                 .connections
@@ -417,12 +551,12 @@ where
     where
         F: FnMut(GattPeripheralEvent),
     {
-        let added = self.state.0.lock(|state| {
+        let added = self.ctx.state.lock(|state| {
             let mut state = state.borrow_mut();
             if state.connections.len() < MAX_CONNECTIONS {
                 state
                     .connections
-                    .push(ConnState {
+                    .push(Connection {
                         peer: addr,
                         conn_id,
                         subscribed: false,
@@ -450,12 +584,12 @@ where
     where
         F: FnMut(GattPeripheralEvent),
     {
-        self.state.0.lock(|state| {
+        self.ctx.state.lock(|state| {
             let mut state = state.borrow_mut();
             if let Some(index) = state
                 .connections
                 .iter()
-                .position(|ConnState { peer, .. }| *peer == addr)
+                .position(|Connection { peer, .. }| *peer == addr)
             {
                 state.connections.swap_remove(index);
             }
@@ -483,7 +617,7 @@ where
     where
         F: FnMut(GattPeripheralEvent),
     {
-        let event = self.state.0.lock(|state| {
+        let event = self.ctx.state.lock(|state| {
             let mut state = state.borrow_mut();
             let c2_handle = state.c2_handle;
             let c2_cccd_handle = state.c2_cccd_handle;
@@ -551,102 +685,5 @@ where
         }
 
         Ok(())
-    }
-}
-
-pub struct BluedroidGattPeripheral<'a, 'd, M>
-where
-    M: BleEnabled,
-{
-    context: &'a BtpGattContext,
-    driver: &'a BtDriver<'d, M>,
-}
-
-impl<'a, 'd, M> BluedroidGattPeripheral<'a, 'd, M>
-where
-    M: BleEnabled,
-{
-    /// Create a new instance.
-    pub fn new(context: &'a BtpGattContext, driver: &'a BtDriver<'d, M>) -> Self {
-        Self { context, driver }
-    }
-
-    pub fn run<F>(
-        &self,
-        service_name: &str,
-        service_adv_data: &AdvData,
-        mut callback: F,
-    ) -> Result<(), Error>
-    where
-        F: FnMut(GattPeripheralEvent) + Send + 'd,
-    {
-        let _pin = service_adv_data.pin();
-
-        let gap = EspBleGap::new(self.driver)?;
-        let gatts = EspGatts::new(self.driver)?;
-
-        unsafe {
-            gap.subscribe_nonstatic(|event| {
-                let state = PeripheralState::new(&gap, &gatts, &self.context);
-
-                state.check_esp_status(state.on_gap_event(event));
-            })?;
-        }
-
-        let adv_data = service_adv_data.clone();
-        let service_name = service_name.to_owned();
-
-        unsafe {
-            gatts.subscribe_nonstatic(|(gatt_if, event)| {
-                let state = PeripheralState::new(&gap, &gatts, &self.context);
-
-                state.check_esp_status(state.on_gatts_event(
-                    &service_name,
-                    &adv_data,
-                    gatt_if,
-                    event,
-                    &mut callback,
-                ))
-            })?;
-        }
-
-        Ok(())
-    }
-
-    /// Indicate new data on characteristic `C2` to a remote peer.
-    pub fn indicate(&self, data: &[u8], address: BtAddr) -> Result<bool, Error> {
-        //Ok(self.0.indicate(data, address)?)
-        todo!()
-    }
-}
-
-impl<'a, 'd, M> GattPeripheral for BluedroidGattPeripheral<'a, 'd, M>
-where
-    M: BleEnabled,
-{
-    async fn run<F>(
-        &self,
-        service_name: &str,
-        adv_data: &AdvData,
-        callback: F,
-    ) -> Result<(), rs_matter::error::Error>
-    where
-        F: FnMut(GattPeripheralEvent) + Send + Clone + 'static,
-    {
-        BluedroidGattPeripheral::run(self, service_name, adv_data, callback)
-            .map_err(|_| ErrorCode::BtpError)?;
-
-        core::future::pending().await
-    }
-
-    async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), rs_matter::error::Error> {
-        // TODO: Is indicate blocking?
-        if BluedroidGattPeripheral::indicate(self, data, address)
-            .map_err(|_| ErrorCode::BtpError)?
-        {
-            Ok(())
-        } else {
-            Err(ErrorCode::NoNetworkInterface.into())
-        }
     }
 }

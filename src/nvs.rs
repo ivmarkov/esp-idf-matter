@@ -7,14 +7,14 @@ use log::info;
 
 use rs_matter::Matter;
 
-use crate::{error::Error, wifi::WifiNetworks};
+use crate::{error::Error, wifi::WifiContext};
 
 pub enum Network<'a, const N: usize, M>
 where
     M: RawMutex,
 {
     None,
-    Wifi(&'a WifiNetworks<N, M>),
+    Wifi(&'a WifiContext<N, M>),
 }
 
 impl<'a, const N: usize, M> Network<'a, N, M>

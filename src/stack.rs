@@ -29,6 +29,10 @@ use crate::multicast::{join_multicast_v4, join_multicast_v6};
 use crate::netif::{get_ips, NetifAccess};
 use crate::nvs;
 
+const MAX_SUBSCRIPTIONS: usize = 3;
+const MAX_IM_BUFFERS: usize = 10;
+const PSM_BUFFER_SIZE: usize = 4096;
+
 #[cfg(all(
     not(esp32h2),
     not(esp32s2),
@@ -55,9 +59,9 @@ where
     T: Network,
 {
     matter: Matter<'a>,
-    buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
-    psm_buffer: PooledBuffers<1, NoopRawMutex, heapless::Vec<u8, 4096>>,
-    subscriptions: Subscriptions<3>,
+    buffers: PooledBuffers<MAX_IM_BUFFERS, NoopRawMutex, IMBuffer>,
+    psm_buffer: PooledBuffers<1, NoopRawMutex, heapless::Vec<u8, PSM_BUFFER_SIZE>>,
+    subscriptions: Subscriptions<MAX_SUBSCRIPTIONS>,
     #[allow(unused)]
     network: T,
 }
@@ -176,6 +180,8 @@ where
         let mut psm = nvs::Psm::new(self.matter(), network, nvs, &mut psm_buf)?;
 
         psm.run().await
+
+        // core::future::pending().await
     }
 
     async fn run_responder<H>(&self, handler: H) -> Result<(), Error>
@@ -340,10 +346,12 @@ mod wifible {
     use crate::wifi::{comm, diag, WifiContext};
     use crate::{MatterStack, Network};
 
+    const MAX_WIFI_NETWORKS: usize = 2;
+
     pub struct WifiBle {
         btp_context: BtpContext<EspRawMutex>,
         btp_gatt_context: BtpGattContext,
-        wifi_context: WifiContext<3, NoopRawMutex>,
+        wifi_context: WifiContext<MAX_WIFI_NETWORKS, NoopRawMutex>,
     }
 
     impl WifiBle {
@@ -374,7 +382,8 @@ mod wifible {
         }
 
         pub async fn is_commissioned(&self, _nvs: EspDefaultNvsPartition) -> Result<bool, Error> {
-            todo!()
+            // TODO
+            Ok(false)
         }
 
         pub async fn operate<'d, T>(
@@ -480,7 +489,7 @@ mod wifible {
         HandlerCompat<descriptor::DescriptorCluster<'a>>,
         HandlerCompat<cluster_basic_information::BasicInfoCluster<'a>>,
         HandlerCompat<general_commissioning::GenCommCluster<'a>>,
-        comm::WifiNwCommCluster<'a, 3, NoopRawMutex>,
+        comm::WifiNwCommCluster<'a, MAX_WIFI_NETWORKS, NoopRawMutex>,
         HandlerCompat<admin_commissioning::AdminCommCluster<'a>>,
         HandlerCompat<noc::NocCluster<'a>>,
         HandlerCompat<access_control::AccessControlCluster<'a>>,
@@ -505,7 +514,7 @@ mod wifible {
     fn handler<'a, T>(
         endpoint_id: u16,
         matter: &'a T,
-        networks: &'a WifiContext<3, NoopRawMutex>,
+        networks: &'a WifiContext<MAX_WIFI_NETWORKS, NoopRawMutex>,
     ) -> RootEndpointHandler<'a>
     where
         T: Borrow<BasicInfoConfig<'a>>
@@ -546,7 +555,7 @@ mod wifible {
         mdns: &'a dyn Mdns,
         epoch: Epoch,
         rand: Rand,
-        networks: &'a WifiContext<3, NoopRawMutex>,
+        networks: &'a WifiContext<MAX_WIFI_NETWORKS, NoopRawMutex>,
     ) -> RootEndpointHandler<'a> {
         EmptyHandler
             .chain(

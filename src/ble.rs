@@ -37,6 +37,7 @@ use rs_matter::utils::ifmutex::IfMutex;
 use crate::error::Error;
 
 const MAX_CONNECTIONS: usize = MAX_BTP_SESSIONS;
+const MAX_MTU_SIZE: usize = 512;
 
 #[derive(Debug, Clone)]
 struct Connection {
@@ -59,7 +60,7 @@ struct State {
 #[derive(Debug, Clone)]
 struct IndBuffer {
     addr: BtAddr,
-    data: heapless::Vec<u8, 512>,
+    data: heapless::Vec<u8, MAX_MTU_SIZE>,
 }
 
 pub struct BtpGattContext {

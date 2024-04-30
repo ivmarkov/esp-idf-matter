@@ -210,7 +210,7 @@ The examples could be built and flashed conveniently with [`cargo-espflash`](htt
 
 with `cargo-espflash`:
 ```sh
-$ MCU=esp32c3 cargo espflash flash --target riscv32imc-esp-espidf --example light --monitor
+$ MCU=esp32c3 cargo espflash flash --target riscv32imc-esp-espidf --example light --features examples --monitor
 ```
 
 | MCU | "--target" |

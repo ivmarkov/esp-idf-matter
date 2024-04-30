@@ -168,20 +168,22 @@ where
         P: NvsPartitionId,
         M: RawMutex,
     {
-        let mut psm_buf = self
-            .psm_buffer
-            .get()
-            .await
-            .ok_or(ErrorCode::ResourceExhausted)?;
-        psm_buf.resize_default(4096).unwrap();
+        if false {
+            let mut psm_buf = self
+                .psm_buffer
+                .get()
+                .await
+                .ok_or(ErrorCode::ResourceExhausted)?;
+            psm_buf.resize_default(4096).unwrap();
 
-        let nvs = EspNvs::new(nvs, "rs_matter", true)?;
+            let nvs = EspNvs::new(nvs, "rs_matter", true)?;
 
-        let mut psm = nvs::Psm::new(self.matter(), network, nvs, &mut psm_buf)?;
+            let mut psm = nvs::Psm::new(self.matter(), network, nvs, &mut psm_buf)?;
 
-        psm.run().await
-
-        // core::future::pending().await
+            psm.run().await
+        } else {
+            core::future::pending().await
+        }
     }
 
     async fn run_responder<H>(&self, handler: H) -> Result<(), Error>
@@ -307,6 +309,8 @@ mod wifible {
     use esp_idf_svc::timer::EspTaskTimerService;
     use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
 
+    use log::info;
+
     use rs_matter::acl::AclMgr;
     use rs_matter::data_model::cluster_basic_information::{
         self, BasicInfoCluster, BasicInfoConfig,
@@ -397,6 +401,8 @@ mod wifible {
         where
             T: AsyncHandler + AsyncMetadata,
         {
+            info!("Running Matter in operating mode (Wifi)");
+
             let wifi = Mutex::<NoopRawMutex, _>::new(AsyncWifi::wrap(
                 wifi,
                 sysloop.clone(),
@@ -422,6 +428,8 @@ mod wifible {
             T: AsyncHandler + AsyncMetadata,
             M: BleEnabled,
         {
+            info!("Running Matter in commissioning mode (BLE)");
+
             let peripheral = BtpGattPeripheral::new(bt, &self.network.btp_gatt_context);
 
             let btp = Btp::new(peripheral, &self.network.btp_context);
@@ -457,9 +465,13 @@ mod wifible {
         where
             T: AsyncHandler + AsyncMetadata,
         {
+            info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
+
             loop {
                 if !self.is_commissioned(nvs.clone()).await? {
                     let bt = BtDriver::<Ble>::new(&mut modem, Some(nvs.clone()))?;
+
+                    info!("BLE driver initialized");
 
                     let mut main =
                         pin!(self.commission(nvs.clone(), &bt, dev_comm.clone(), &handler));
@@ -472,6 +484,8 @@ mod wifible {
                 }
 
                 let mut wifi = EspWifi::new(&mut modem, sysloop.clone(), Some(nvs.clone()))?;
+
+                info!("Wifi driver initialized");
 
                 self.operate(
                     sysloop.clone(),

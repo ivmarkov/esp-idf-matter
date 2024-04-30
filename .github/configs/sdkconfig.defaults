@@ -1,5 +1,5 @@
-# rs-matter needs a large stack size
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=20000
+# Increase a bit these stack sizes as they are too low by default
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=8192
 #CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=8192
 

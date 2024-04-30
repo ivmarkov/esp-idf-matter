@@ -24,7 +24,7 @@ use esp_idf_svc::bt::{BdAddr, BleEnabled, BtDriver, BtStatus, BtUuid};
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
 use esp_idf_svc::sys::{EspError, ESP_FAIL};
 
-use log::warn;
+use log::{info, warn};
 
 use rs_matter::error::ErrorCode;
 use rs_matter::transport::network::btp::{
@@ -136,6 +136,8 @@ where
         let gap = EspBleGap::new(self.driver)?;
         let gatts = EspGatts::new(self.driver)?;
 
+        info!("BLE Gap and Gatts initialized");
+
         unsafe {
             gap.subscribe_nonstatic(|event| {
                 let ctx = GattExecContext::new(&gap, &gatts, self.context);
@@ -161,8 +163,10 @@ where
             })?;
         }
 
+        info!("BLE Gap and Gatts subscriptions initialized");
+
         loop {
-            let mut ind = self.context.ind.lock_if(|ind| ind.data.is_empty()).await;
+            let mut ind = self.context.ind.lock_if(|ind| !ind.data.is_empty()).await;
 
             let ctx = GattExecContext::new(&gap, &gatts, self.context);
 

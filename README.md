@@ -35,6 +35,7 @@ use esp_idf_matter::{Error, MatterStack, WifiBle};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
 
@@ -55,6 +56,22 @@ use static_cell::ConstStaticCell;
 mod dev_att;
 
 fn main() -> Result<(), Error> {
+    EspLogger::initialize_default();
+
+    info!("Starting...");
+
+    // Run in a higher-prio thread to avoid issues with `async-io` getting
+    // confused by the low priority of the ESP IDF main task
+    // Also allocate a large stack as `rs-matter` futures do occupy quite some space
+    let thread = std::thread::Builder::new()
+        .stack_size(40 * 1024)
+        .spawn(run)
+        .unwrap();
+
+    thread.join().unwrap()
+}
+
+fn run() -> Result<(), Error> {
     // Take the Matter stack (can be done only once),
     // as we'll run it in this thread
     let stack = MATTER_STACK.take();

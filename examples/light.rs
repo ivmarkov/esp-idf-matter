@@ -61,7 +61,7 @@ fn main() -> Result<(), Error> {
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
-    let matter = pin!(stack.run(
+    let mut matter = pin!(stack.run(
         // The Matter stack needs (a clone of) the system event loop
         EspSystemEventLoop::take()?,
         // The Matter stack needs (a clone of) the timer service
@@ -87,7 +87,7 @@ fn main() -> Result<(), Error> {
     // Run a sample loop that simulates state changes triggered by the HAL
     // Changes will be properly communicated to the Matter controllers
     // (i.e. Google Home, Alexa) and other Matter devices thanks to subscriptions
-    let device = pin!(async {
+    let mut device = pin!(async {
         loop {
             // Simulate user toggling the light with a physical switch every 5 seconds
             Timer::after(Duration::from_secs(5)).await;
@@ -96,15 +96,15 @@ fn main() -> Result<(), Error> {
             on_off.set(!on_off.get());
 
             // Let the Matter stack know that we have changed
-            // the state of our Lamp device
+            // the state of our Light device
             stack.notify_changed();
 
-            info!("Lamp toggled");
+            info!("Light toggled");
         }
     });
 
     // Schedule the Matter run & the device loop together
-    esp_idf_svc::hal::task::block_on(select(matter, device).coalesce())?;
+    esp_idf_svc::hal::task::block_on(select(&mut matter, &mut device).coalesce())?;
 
     Ok(())
 }

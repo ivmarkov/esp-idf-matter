@@ -14,7 +14,7 @@ Users are expected to provide implementations for various `rs-matter` abstractio
 
 Furthermore, _operating_ the assembled Matter stack is also challenging, as various features might need to be switched on or off depending on whether Matter is running in commissioning or operating mode, and also depending on the current network connectivity (as in e.g. Wifi signal lost).
 
-This crate provides an all-in-one [`MatterStack`]() assembly that configures `rs-matter` for operating on top of the ESP IDF SDK.
+This crate provides an all-in-one [`MatterStack`](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/lib.rs#L111) assembly that configures `rs-matter` for operating on top of the ESP IDF SDK.
 
 Instantiate it and then call `MatterStack::run(...)`.
 
@@ -22,7 +22,7 @@ Instantiate it and then call `MatterStack::run(...)`.
 //! An example utilizing the `MatterStack<WifiBle>` struct.
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport, and BLE for commissioning.
 //! If use want to use Ethernet, utilize `MatterStack<Eth>` instead.
-//! 
+//!
 //! The example implements a fictitious Light device (an on-off cluster).
 
 use core::borrow::Borrow;
@@ -55,15 +55,15 @@ use static_cell::ConstStaticCell;
 mod dev_att;
 
 fn main() -> Result<(), Error> {
-    // Take the Matter stack (can be done only once), 
+    // Take the Matter stack (can be done only once),
     // as we'll run it in this thread
     let stack = MATTER_STACK.take();
 
-    // Our "light" on-off cluster. 
+    // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
     let on_off = cluster_on_off::OnOffCluster::new(*stack.matter().borrow());
 
-    // Chain our endpoint clusters with the 
+    // Chain our endpoint clusters with the
     // (root) Endpoint 0 system clusters in the final handler
     let handler = HandlerCompat(
         stack
@@ -80,20 +80,20 @@ fn main() -> Result<(), Error> {
     );
 
     // Run the Matter stack with our handler
-    // Using `pin!` is completely optional, but saves some memory due to `rustc` 
+    // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
-    let matter = pin!(stack.run(
+    let mut matter = pin!(stack.run(
         // The Matter stack needs (a clone of) the system event loop
-        EspSystemEventLoop::take()?, 
+        EspSystemEventLoop::take()?,
         // The Matter stack needs (a clone of) the timer service
-        EspTaskTimerService::new()?, 
+        EspTaskTimerService::new()?,
         // The Matter stack needs (a clone of) the default ESP IDF NVS partition
-        EspDefaultNvsPartition::take()?, 
+        EspDefaultNvsPartition::take()?,
         // The Matter stack needs the BT/Wifi modem peripheral - and in general -
         // the Bluetooth / Wifi connections will be managed by the Matter stack itself
-        // For finer-grained control, call `MatterStack::is_commissioned`, 
+        // For finer-grained control, call `MatterStack::is_commissioned`,
         // `MatterStack::commission` and `MatterStack::operate`
-        Peripherals::take()?.modem,      
+        Peripherals::take()?.modem,
         // Hard-coded for demo purposes
         CommissioningData {
             verifier: VerifierData::new_with_pw(123456, *stack.matter().borrow()),
@@ -106,9 +106,9 @@ fn main() -> Result<(), Error> {
     // Just for demoing purposes:
     //
     // Run a sample loop that simulates state changes triggered by the HAL
-    // Changes will be properly communicated to the Matter controllers 
+    // Changes will be properly communicated to the Matter controllers
     // (i.e. Google Home, Alexa) and other Matter devices thanks to subscriptions
-    let device = pin!(async {
+    let mut device = pin!(async {
         loop {
             // Simulate user toggling the light with a physical switch every 5 seconds
             Timer::after(Duration::from_secs(5)).await;
@@ -116,21 +116,21 @@ fn main() -> Result<(), Error> {
             // Toggle
             on_off.set(!on_off.get());
 
-            // Let the Matter stack know that we have changed 
-            // the state of our Lamp device
+            // Let the Matter stack know that we have changed
+            // the state of our Light device
             stack.notify_changed();
 
-            info!("Lamp toggled");
+            info!("Light toggled");
         }
     });
 
     // Schedule the Matter run & the device loop together
-    esp_idf_svc::hal::task::block_on(select(matter, device).coalesce())?;
+    esp_idf_svc::hal::task::block_on(select(&mut matter, &mut device).coalesce())?;
 
     Ok(())
 }
 
-/// The Matter stack is allocated statically to avoid 
+/// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
 static MATTER_STACK: ConstStaticCell<MatterStack<WifiBle>> =
@@ -149,7 +149,7 @@ static MATTER_STACK: ConstStaticCell<MatterStack<WifiBle>> =
         &dev_att::HardCodedDevAtt::new(),
     ));
 
-/// Endpoint 0 (the root endpoint) always runs 
+/// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1
 const LIGHT_ENDPOINT_ID: u16 = 1;
 
@@ -167,7 +167,7 @@ const NODE: Node<'static> = Node {
 };
 ```
 
-(See also [Examples])
+(See also [Examples](#examples))
 
 ### Advanced use cases
 
@@ -175,12 +175,12 @@ If the provided `MatterStack` does not cut it, users can implement their own sta
 
 #### Building blocks
 
-* [Bluetooth commissioning support]() with the ESP IDF Bluedroid stack (not necessary if you plan to run Matter over Ethernet)
-* WiFi provisioning support via an [ESP IDF specific Matter Network Commissioning Cluster implementation]()
-* [Non-volatile storage for Matter persistent data (fabrics, ACLs and network connections)]() on top of the ESP IDF NVS flash API
+* [Bluetooth commissioning support](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/ble.rs) with the ESP IDF Bluedroid stack (not necessary if you plan to run Matter over Ethernet)
+* WiFi provisioning support via an [ESP IDF specific Matter Network Commissioning Cluster implementation](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/wifi/comm.rs)
+* [Non-volatile storage for Matter persistent data (fabrics, ACLs and network connections)](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/nvs.rs) on top of the ESP IDF NVS flash API
 * mDNS:
-  * Optional [Matter mDNS responder implementation]() based on the ESP IDF mDNS responder (use if you need to register other services besides Matter in mDNS)
-  * [UDP-multicast workarounds]() for `rs-matter`'s built-in mDNS responder, addressing bugs in the Rust STD wrappers of ESP IDF
+  * Optional [Matter mDNS responder implementation](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/mdns.rs) based on the ESP IDF mDNS responder (use if you need to register other services besides Matter in mDNS)
+  * [UDP-multicast workarounds](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/multicast.rs) for `rs-matter`'s built-in mDNS responder, addressing bugs in the Rust STD wrappers of ESP IDF
 
 #### Future
 * Device Attestation data support using secure flash storage
@@ -203,12 +203,12 @@ Follow the [Prerequisites](https://github.com/esp-rs/esp-idf-template#prerequisi
 
 ## Examples
 
-The examples could be built and flashed conveniently with [`cargo-espflash`](https://github.com/esp-rs/espflash/). To run e.g. `wifi` on an e.g. ESP32-C3:
+The examples could be built and flashed conveniently with [`cargo-espflash`](https://github.com/esp-rs/espflash/). To run e.g. `light` on an e.g. ESP32-C3:
 (Swap the Rust target and example name with the target corresponding for your ESP32 MCU and with the example you would like to build)
 
 with `cargo-espflash`:
 ```sh
-$ MCU=esp32c3 cargo espflash flash --target riscv32imc-esp-espidf --example wifi --monitor
+$ MCU=esp32c3 cargo espflash flash --target riscv32imc-esp-espidf --example light --monitor
 ```
 
 | MCU | "--target" |

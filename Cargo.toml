@@ -16,7 +16,8 @@ rust-version = "1.77"
 
 [patch.crates-io]
 embedded-svc = { git = "https://github.com/esp-rs/embedded-svc" }
-esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", branch = "gatt" }
+#esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", branch = "gatt" }
+esp-idf-svc = { path = "../esp-idf-svc" }
 rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
 rs-matter-macros = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
 

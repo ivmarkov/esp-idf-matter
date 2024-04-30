@@ -65,19 +65,21 @@ fn main() -> Result<(), Error> {
 
     // Chain our endpoint clusters with the
     // (root) Endpoint 0 system clusters in the final handler
-    let handler = HandlerCompat(
-        stack
-            .root_handler()
-            // Our on-off cluster, on Endpoint 1
-            .chain(LIGHT_ENDPOINT_ID, cluster_on_off::ID, &on_off)
-            // Each Endpoint needs a Descriptor cluster too
-            // Just use the one that `rs-matter` provides out of the box
-            .chain(
-                LIGHT_ENDPOINT_ID,
-                descriptor::ID,
-                descriptor::DescriptorCluster::new(*stack.matter().borrow()),
-            ),
-    );
+    let handler = stack
+        .root_handler()
+        // Our on-off cluster, on Endpoint 1
+        .chain(
+            LIGHT_ENDPOINT_ID,
+            cluster_on_off::ID,
+            HandlerCompat(&on_off),
+        )
+        // Each Endpoint needs a Descriptor cluster too
+        // Just use the one that `rs-matter` provides out of the box
+        .chain(
+            LIGHT_ENDPOINT_ID,
+            descriptor::ID,
+            HandlerCompat(descriptor::DescriptorCluster::new(*stack.matter().borrow())),
+        );
 
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`

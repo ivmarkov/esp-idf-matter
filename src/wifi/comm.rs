@@ -39,7 +39,7 @@ where
         }
     }
 
-    async fn read(
+    pub fn read(
         &self,
         attr: &AttrDetails<'_>,
         encoder: AttrDataEncoder<'_, '_, '_>,
@@ -111,7 +111,7 @@ where
         }
     }
 
-    async fn invoke(
+    pub async fn invoke(
         &self,
         exchange: &Exchange<'_>,
         cmd: &CmdDetails<'_>,
@@ -121,18 +121,15 @@ where
         match cmd.cmd_id.try_into()? {
             Commands::ScanNetworks => {
                 info!("ScanNetworks");
-                self.scan_networks(exchange, &ScanNetworksRequest::from_tlv(data)?, encoder)
-                    .await?;
+                self.scan_networks(exchange, &ScanNetworksRequest::from_tlv(data)?, encoder)?;
             }
             Commands::AddOrUpdateWifiNetwork => {
                 info!("AddOrUpdateWifiNetwork");
-                self.add_network(exchange, &AddWifiNetworkRequest::from_tlv(data)?, encoder)
-                    .await?;
+                self.add_network(exchange, &AddWifiNetworkRequest::from_tlv(data)?, encoder)?;
             }
             Commands::RemoveNetwork => {
                 info!("RemoveNetwork");
-                self.remove_network(exchange, &RemoveNetworkRequest::from_tlv(data)?, encoder)
-                    .await?;
+                self.remove_network(exchange, &RemoveNetworkRequest::from_tlv(data)?, encoder)?;
             }
             Commands::ConnectNetwork => {
                 info!("ConnectNetwork");
@@ -141,8 +138,7 @@ where
             }
             Commands::ReorderNetwork => {
                 info!("ReorderNetwork");
-                self.reorder_network(exchange, &ReorderNetworkRequest::from_tlv(data)?, encoder)
-                    .await?;
+                self.reorder_network(exchange, &ReorderNetworkRequest::from_tlv(data)?, encoder)?;
             }
             other => {
                 error!("{other:?} (not supported)");
@@ -155,7 +151,7 @@ where
         Ok(())
     }
 
-    async fn scan_networks(
+    fn scan_networks(
         &self,
         _exchange: &Exchange<'_>,
         _req: &ScanNetworksRequest<'_>,
@@ -168,7 +164,7 @@ where
         Ok(())
     }
 
-    async fn add_network(
+    fn add_network(
         &self,
         exchange: &Exchange<'_>,
         req: &AddWifiNetworkRequest<'_>,
@@ -244,7 +240,7 @@ where
         })
     }
 
-    async fn remove_network(
+    fn remove_network(
         &self,
         exchange: &Exchange<'_>,
         req: &RemoveNetworkRequest<'_>,
@@ -312,11 +308,11 @@ where
 
         self.networks.network_connect_requested.notify();
 
-        // Block forever waitinng for the firware to restart
+        // Block forever waiting for the firware to restart
         core::future::pending().await
     }
 
-    async fn reorder_network(
+    fn reorder_network(
         &self,
         exchange: &Exchange<'_>,
         req: &ReorderNetworkRequest<'_>,
@@ -386,7 +382,7 @@ where
         attr: &'m AttrDetails<'_>,
         encoder: AttrDataEncoder<'m, '_, '_>,
     ) -> Result<(), Error> {
-        WifiNwCommCluster::read(self, attr, encoder).await
+        WifiNwCommCluster::read(self, attr, encoder)
     }
 
     async fn invoke<'m>(

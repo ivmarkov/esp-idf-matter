@@ -306,7 +306,7 @@ mod wifible {
         self, BasicInfoCluster, BasicInfoConfig,
     };
     use rs_matter::data_model::objects::{
-        AsyncHandler, AsyncMetadata, Cluster, EmptyHandler, Endpoint,
+        AsyncHandler, AsyncMetadata, Cluster, EmptyHandler, Endpoint, HandlerCompat,
     };
     use rs_matter::data_model::sdm::admin_commissioning::AdminCommCluster;
     use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
@@ -477,16 +477,16 @@ mod wifible {
     }
 
     pub type RootEndpointHandler<'a> = handler_chain_type!(
-        descriptor::DescriptorCluster<'static>,
-        cluster_basic_information::BasicInfoCluster<'a>,
-        general_commissioning::GenCommCluster<'a>,
+        HandlerCompat<descriptor::DescriptorCluster<'a>>,
+        HandlerCompat<cluster_basic_information::BasicInfoCluster<'a>>,
+        HandlerCompat<general_commissioning::GenCommCluster<'a>>,
         comm::WifiNwCommCluster<'a, 3, NoopRawMutex>,
-        admin_commissioning::AdminCommCluster<'a>,
-        noc::NocCluster<'a>,
-        access_control::AccessControlCluster<'a>,
-        general_diagnostics::GenDiagCluster,
-        diag::WifiNwDiagCluster,
-        group_key_management::GrpKeyMgmtCluster
+        HandlerCompat<admin_commissioning::AdminCommCluster<'a>>,
+        HandlerCompat<noc::NocCluster<'a>>,
+        HandlerCompat<access_control::AccessControlCluster<'a>>,
+        HandlerCompat<general_diagnostics::GenDiagCluster>,
+        HandlerCompat<diag::WifiNwDiagCluster>,
+        HandlerCompat<group_key_management::GrpKeyMgmtCluster>
     );
 
     const CLUSTERS: [Cluster<'static>; 10] = [
@@ -552,28 +552,34 @@ mod wifible {
             .chain(
                 endpoint_id,
                 group_key_management::ID,
-                GrpKeyMgmtCluster::new(rand),
+                HandlerCompat(GrpKeyMgmtCluster::new(rand)),
             )
-            .chain(endpoint_id, diag::ID, WifiNwDiagCluster::new(rand))
+            .chain(
+                endpoint_id,
+                diag::ID,
+                HandlerCompat(WifiNwDiagCluster::new(rand)),
+            )
             .chain(
                 endpoint_id,
                 general_diagnostics::ID,
-                GenDiagCluster::new(rand),
+                HandlerCompat(GenDiagCluster::new(rand)),
             )
             .chain(
                 endpoint_id,
                 access_control::ID,
-                AccessControlCluster::new(acl, rand),
+                HandlerCompat(AccessControlCluster::new(acl, rand)),
             )
             .chain(
                 endpoint_id,
                 noc::ID,
-                NocCluster::new(dev_att, fabric, acl, failsafe, mdns, epoch, rand),
+                HandlerCompat(NocCluster::new(
+                    dev_att, fabric, acl, failsafe, mdns, epoch, rand,
+                )),
             )
             .chain(
                 endpoint_id,
                 admin_commissioning::ID,
-                AdminCommCluster::new(pase, mdns, rand),
+                HandlerCompat(AdminCommCluster::new(pase, mdns, rand)),
             )
             .chain(
                 endpoint_id,
@@ -583,13 +589,17 @@ mod wifible {
             .chain(
                 endpoint_id,
                 general_commissioning::ID,
-                GenCommCluster::new(failsafe, rand),
+                HandlerCompat(GenCommCluster::new(failsafe, rand)),
             )
             .chain(
                 endpoint_id,
                 cluster_basic_information::ID,
-                BasicInfoCluster::new(basic_info, rand),
+                HandlerCompat(BasicInfoCluster::new(basic_info, rand)),
             )
-            .chain(endpoint_id, descriptor::ID, DescriptorCluster::new(rand))
+            .chain(
+                endpoint_id,
+                descriptor::ID,
+                HandlerCompat(DescriptorCluster::new(rand)),
+            )
     }
 }

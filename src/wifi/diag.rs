@@ -195,5 +195,4 @@ impl Handler for WifiNwDiagCluster {
     }
 }
 
-// TODO: Might be removed once the `on` member is externalized
 impl NonBlockingHandler for WifiNwDiagCluster {}

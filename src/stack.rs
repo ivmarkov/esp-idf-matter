@@ -284,6 +284,8 @@ impl<'a> MatterStack<'a, Eth> {
     esp_idf_bt_bluedroid_enabled
 ))]
 mod wifible {
+    use core::borrow::Borrow;
+    use core::cell::RefCell;
     use core::pin::pin;
 
     use embassy_futures::select::select;
@@ -299,17 +301,43 @@ mod wifible {
     use esp_idf_svc::timer::EspTaskTimerService;
     use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
 
-    use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint};
-    use rs_matter::data_model::root_endpoint::{self, RootEndpointHandler};
+    use rs_matter::acl::AclMgr;
+    use rs_matter::data_model::cluster_basic_information::{
+        self, BasicInfoCluster, BasicInfoConfig,
+    };
+    use rs_matter::data_model::objects::{
+        AsyncHandler, AsyncMetadata, Cluster, EmptyHandler, Endpoint,
+    };
+    use rs_matter::data_model::sdm::admin_commissioning::AdminCommCluster;
+    use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
+    use rs_matter::data_model::sdm::failsafe::FailSafe;
+    use rs_matter::data_model::sdm::general_commissioning::GenCommCluster;
+    use rs_matter::data_model::sdm::general_diagnostics::GenDiagCluster;
+    use rs_matter::data_model::sdm::group_key_management::GrpKeyMgmtCluster;
+    use rs_matter::data_model::sdm::noc::NocCluster;
+    use rs_matter::data_model::sdm::{
+        admin_commissioning, general_commissioning, general_diagnostics, group_key_management, noc,
+        nw_commissioning,
+    };
+    use rs_matter::data_model::system_model::access_control::AccessControlCluster;
+    use rs_matter::data_model::system_model::descriptor::DescriptorCluster;
+    use rs_matter::data_model::system_model::{access_control, descriptor};
+    use rs_matter::fabric::FabricMgr;
+    use rs_matter::mdns::Mdns;
     use rs_matter::pairing::DiscoveryCapabilities;
+    use rs_matter::secure_channel::pake::PaseMgr;
     use rs_matter::transport::network::btp::{Btp, BtpContext};
+    use rs_matter::utils::epoch::Epoch;
+    use rs_matter::utils::rand::Rand;
     use rs_matter::utils::select::Coalesce;
-    use rs_matter::CommissioningData;
+    use rs_matter::{handler_chain_type, CommissioningData};
 
     use crate::ble::{BtpGattContext, BtpGattPeripheral};
     use crate::error::Error;
+    use crate::wifi::comm::WifiNwCommCluster;
+    use crate::wifi::diag::WifiNwDiagCluster;
     use crate::wifi::mgmt::WifiManager;
-    use crate::wifi::WifiContext;
+    use crate::wifi::{comm, diag, WifiContext};
     use crate::{MatterStack, Network};
 
     pub struct WifiBle {
@@ -334,11 +362,15 @@ mod wifible {
 
     impl<'a> MatterStack<'a, WifiBle> {
         pub const fn root_metadata() -> Endpoint<'static> {
-            root_endpoint::endpoint(0)
+            Endpoint {
+                id: 0,
+                device_type: rs_matter::data_model::device_types::DEV_TYPE_ROOT_NODE,
+                clusters: &CLUSTERS,
+            }
         }
 
         pub fn root_handler(&self) -> RootEndpointHandler<'_> {
-            root_endpoint::handler(0, self.matter())
+            handler(0, self.matter(), &self.network.wifi_context)
         }
 
         pub async fn is_commissioned(&self, _nvs: EspDefaultNvsPartition) -> Result<bool, Error> {
@@ -442,5 +474,122 @@ mod wifible {
                 .await?;
             }
         }
+    }
+
+    pub type RootEndpointHandler<'a> = handler_chain_type!(
+        descriptor::DescriptorCluster<'static>,
+        cluster_basic_information::BasicInfoCluster<'a>,
+        general_commissioning::GenCommCluster<'a>,
+        comm::WifiNwCommCluster<'a, 3, NoopRawMutex>,
+        admin_commissioning::AdminCommCluster<'a>,
+        noc::NocCluster<'a>,
+        access_control::AccessControlCluster<'a>,
+        general_diagnostics::GenDiagCluster,
+        diag::WifiNwDiagCluster,
+        group_key_management::GrpKeyMgmtCluster
+    );
+
+    const CLUSTERS: [Cluster<'static>; 10] = [
+        descriptor::CLUSTER,
+        cluster_basic_information::CLUSTER,
+        general_commissioning::CLUSTER,
+        nw_commissioning::WIFI_CLUSTER,
+        admin_commissioning::CLUSTER,
+        noc::CLUSTER,
+        access_control::CLUSTER,
+        general_diagnostics::CLUSTER,
+        diag::CLUSTER,
+        group_key_management::CLUSTER,
+    ];
+
+    fn handler<'a, T>(
+        endpoint_id: u16,
+        matter: &'a T,
+        networks: &'a WifiContext<3, NoopRawMutex>,
+    ) -> RootEndpointHandler<'a>
+    where
+        T: Borrow<BasicInfoConfig<'a>>
+            + Borrow<dyn DevAttDataFetcher + 'a>
+            + Borrow<RefCell<PaseMgr>>
+            + Borrow<RefCell<FabricMgr>>
+            + Borrow<RefCell<AclMgr>>
+            + Borrow<RefCell<FailSafe>>
+            + Borrow<dyn Mdns + 'a>
+            + Borrow<Epoch>
+            + Borrow<Rand>
+            + 'a,
+    {
+        wrap(
+            endpoint_id,
+            matter.borrow(),
+            matter.borrow(),
+            matter.borrow(),
+            matter.borrow(),
+            matter.borrow(),
+            matter.borrow(),
+            matter.borrow(),
+            *matter.borrow(),
+            *matter.borrow(),
+            networks,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn wrap<'a>(
+        endpoint_id: u16,
+        basic_info: &'a BasicInfoConfig<'a>,
+        dev_att: &'a dyn DevAttDataFetcher,
+        pase: &'a RefCell<PaseMgr>,
+        fabric: &'a RefCell<FabricMgr>,
+        acl: &'a RefCell<AclMgr>,
+        failsafe: &'a RefCell<FailSafe>,
+        mdns: &'a dyn Mdns,
+        epoch: Epoch,
+        rand: Rand,
+        networks: &'a WifiContext<3, NoopRawMutex>,
+    ) -> RootEndpointHandler<'a> {
+        EmptyHandler
+            .chain(
+                endpoint_id,
+                group_key_management::ID,
+                GrpKeyMgmtCluster::new(rand),
+            )
+            .chain(endpoint_id, diag::ID, WifiNwDiagCluster::new(rand))
+            .chain(
+                endpoint_id,
+                general_diagnostics::ID,
+                GenDiagCluster::new(rand),
+            )
+            .chain(
+                endpoint_id,
+                access_control::ID,
+                AccessControlCluster::new(acl, rand),
+            )
+            .chain(
+                endpoint_id,
+                noc::ID,
+                NocCluster::new(dev_att, fabric, acl, failsafe, mdns, epoch, rand),
+            )
+            .chain(
+                endpoint_id,
+                admin_commissioning::ID,
+                AdminCommCluster::new(pase, mdns, rand),
+            )
+            .chain(
+                endpoint_id,
+                nw_commissioning::ID,
+                WifiNwCommCluster::new(rand, networks),
+            )
+            .chain(
+                endpoint_id,
+                general_commissioning::ID,
+                GenCommCluster::new(failsafe, rand),
+            )
+            .chain(
+                endpoint_id,
+                cluster_basic_information::ID,
+                BasicInfoCluster::new(basic_info, rand),
+            )
+            .chain(endpoint_id, descriptor::ID, DescriptorCluster::new(rand))
     }
 }

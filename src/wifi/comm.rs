@@ -20,7 +20,7 @@ use rs_matter::utils::rand::Rand;
 
 use super::{WifiContext, WifiCredentials};
 
-pub struct WifiCommCluster<'a, const N: usize, M>
+pub struct WifiNwCommCluster<'a, const N: usize, M>
 where
     M: RawMutex,
 {
@@ -28,7 +28,7 @@ where
     networks: &'a WifiContext<N, M>,
 }
 
-impl<'a, const N: usize, M> WifiCommCluster<'a, N, M>
+impl<'a, const N: usize, M> WifiNwCommCluster<'a, N, M>
 where
     M: RawMutex,
 {
@@ -377,7 +377,7 @@ where
     }
 }
 
-impl<'a, const N: usize, M> AsyncHandler for WifiCommCluster<'a, N, M>
+impl<'a, const N: usize, M> AsyncHandler for WifiNwCommCluster<'a, N, M>
 where
     M: RawMutex,
 {
@@ -386,7 +386,7 @@ where
         attr: &'m AttrDetails<'_>,
         encoder: AttrDataEncoder<'m, '_, '_>,
     ) -> Result<(), Error> {
-        WifiCommCluster::read(self, attr, encoder).await
+        WifiNwCommCluster::read(self, attr, encoder).await
     }
 
     async fn invoke<'m>(
@@ -396,7 +396,7 @@ where
         data: &'m TLVElement<'_>,
         encoder: CmdDataEncoder<'m, '_, '_>,
     ) -> Result<(), Error> {
-        WifiCommCluster::invoke(self, exchange, cmd, data, encoder).await
+        WifiNwCommCluster::invoke(self, exchange, cmd, data, encoder).await
     }
 }
 

@@ -189,13 +189,13 @@ If the provided `MatterStack` does not cut it, users can implement their own sta
 * Thread networking (for ESP32H2 and ESP32C6)
 * Wifi Access-Point based commissioning (for ESP32S2 which does not have Bluetooth support)
 
-#### Additional building blocks provided by `rs-matter` and compatible with ESP IDF:
+#### Additional building blocks provided by `rs-matter` directly and compatible with ESP IDF:
 * UDP and (in future) TCP support
-  * Enable the [`async-io`]() and [`std`] features on `rs-matter` and use `async-io` sockets. The `async-io` crate has support for ESP IDF out of the box
+  * Enable the `async-io` and `std` features on `rs-matter` and use `async-io` sockets. The [`async-io`](https://github.com/smol-rs/async-io) crate has support for ESP IDF out of the box
 * Random number generator
-  * Enable the [`std`] feature on `rs-matter`. This way, the [`rng`]() crate will be utilized, which has support for ESP IDF out of the box
+  * Enable the `std` feature on `rs-matter`. This way, the [`rand`](https://github.com/rust-random/rand) crate will be utilized, which has support for ESP IDF out of the box
 * UNIX epoch
-  * Enable the [`std`] feature on `rs-matter`. This way, the [`rng`]() crate will be utilized, which has support for ESP IDF out of the box
+  * Enable the `std` feature on `rs-matter`. This way, `rs-matter` will utilize `std::time::SystemTime` which is supported by ESP IDF out of the box
 
 ## Build Prerequisites
 

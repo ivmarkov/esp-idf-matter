@@ -10,7 +10,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{error::Error, MatterStack, WifiBle};
+use esp_idf_matter::{Error, MatterStack, WifiBle};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;

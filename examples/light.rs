@@ -37,6 +37,9 @@ mod dev_att;
 fn main() -> Result<(), Error> {
     EspLogger::initialize_default();
 
+    // We'll use `async-io` for networking, so ESP IDF VFS needs to be initialized
+    esp_idf_svc::io::vfs::initialize_eventfd(3)?;
+
     info!("Starting...");
 
     // Run in a higher-prio thread to avoid issues with `async-io` getting

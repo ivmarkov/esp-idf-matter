@@ -302,6 +302,8 @@ mod wifible {
     use core::cell::RefCell;
     use core::pin::pin;
 
+    use alloc::boxed::Box;
+
     use embassy_futures::select::select;
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
     use embassy_sync::mutex::Mutex;
@@ -494,7 +496,11 @@ mod wifible {
                 // Reset the matter transport to free up sessions and exchanges
                 self.matter().reset();
 
-                let mut wifi = EspWifi::new(&mut modem, sysloop.clone(), Some(nvs.clone()))?;
+                let mut wifi = Box::new(EspWifi::new(
+                    &mut modem,
+                    sysloop.clone(),
+                    Some(nvs.clone()),
+                )?);
 
                 info!("Wifi driver initialized");
 

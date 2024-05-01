@@ -15,8 +15,9 @@ use embassy_time::{Duration, Timer};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::netif::EspNetif;
-use esp_idf_svc::sys::{EspError, ESP_ERR_INVALID_STATE};
+use esp_idf_svc::sys::{esp, esp_netif_create_ip6_linklocal, EspError, ESP_ERR_INVALID_STATE};
 use esp_idf_svc::wifi::{self as wifi, AsyncWifi, AuthMethod, EspWifi, WifiEvent};
 
 use log::{error, info, warn};
@@ -124,9 +125,11 @@ where
 
             if result.is_ok() {
                 info!("Connected to SSID {}", creds.ssid);
+
                 self.wait_disconnect().await?;
             } else {
                 error!("Failed to connect to SSID {}: {:?}", creds.ssid, result);
+
                 break result;
             }
         }
@@ -199,11 +202,8 @@ where
         let _ = wifi.stop().await;
 
         wifi.set_configuration(conf)?;
-        info!("Configuration set");
 
         wifi.start().await?;
-
-        info!("Wifi driver started");
 
         let connect = matches!(conf, wifi::Configuration::Client(_))
             && !matches!(
@@ -215,11 +215,12 @@ where
             );
 
         if connect {
-            info!("Connecting...");
             wifi.connect().await?;
         }
 
         info!("Successfully connected with {:?}", conf);
+
+        esp!(unsafe { esp_netif_create_ip6_linklocal(wifi.wifi().sta_netif().handle() as _) })?;
 
         Ok(())
     }

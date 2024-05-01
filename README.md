@@ -58,13 +58,16 @@ mod dev_att;
 fn main() -> Result<(), Error> {
     EspLogger::initialize_default();
 
+    // We'll use `async-io` for networking, so ESP IDF VFS needs to be initialized
+    esp_idf_svc::io::vfs::initialize_eventfd(3)?;
+
     info!("Starting...");
 
     // Run in a higher-prio thread to avoid issues with `async-io` getting
     // confused by the low priority of the ESP IDF main task
     // Also allocate a large stack as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(40 * 1024)
+        .stack_size(60 * 1024)
         .spawn(run)
         .unwrap();
 

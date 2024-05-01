@@ -157,11 +157,11 @@ where
         _req: &ScanNetworksRequest<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        let mut tw = encoder.with_command(ResponseCommands::ScanNetworksResponse as _)?;
+        let writer = encoder.with_command(ResponseCommands::ScanNetworksResponse as _)?;
 
         warn!("Scan network not supported");
 
-        Status::new(IMStatusCode::Busy, 0).to_tlv(&mut tw, TagType::Anonymous)?;
+        writer.set(Status::new(IMStatusCode::Busy, 0))?;
 
         Ok(())
     }
@@ -182,7 +182,7 @@ where
                 .iter()
                 .position(|conf| conf.ssid.as_str().as_bytes() == req.ssid.0);
 
-            let mut tw = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
+            let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
 
             if let Some(index) = index {
                 // Update
@@ -199,12 +199,11 @@ where
 
                 info!("Updated network with SSID {}", state.networks[index].ssid);
 
-                NetworkConfigResponse {
+                writer.set(NetworkConfigResponse {
                     status: NetworkCommissioningStatus::Success,
                     debug_text: None,
                     network_index: Some(index as _),
-                }
-                .to_tlv(&mut tw, TagType::Anonymous)?;
+                })?;
             } else {
                 // Add
                 let network = WifiCredentials {
@@ -228,22 +227,20 @@ where
                             state.networks.last().unwrap().ssid
                         );
 
-                        NetworkConfigResponse {
+                        writer.set(NetworkConfigResponse {
                             status: NetworkCommissioningStatus::Success,
                             debug_text: None,
                             network_index: Some(state.networks.len() as _),
-                        }
-                        .to_tlv(&mut tw, TagType::Anonymous)?;
+                        })?;
                     }
                     Err(network) => {
                         warn!("Adding network with SSID {} failed: too many", network.ssid);
 
-                        NetworkConfigResponse {
+                        writer.set(NetworkConfigResponse {
                             status: NetworkCommissioningStatus::BoundsExceeded,
                             debug_text: None,
                             network_index: None,
-                        }
-                        .to_tlv(&mut tw, TagType::Anonymous)?;
+                        })?;
                     }
                 }
             }
@@ -268,7 +265,7 @@ where
                 .iter()
                 .position(|conf| conf.ssid.as_str().as_bytes() == req.network_id.0);
 
-            let mut tw = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
+            let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
 
             if let Some(index) = index {
                 // Found
@@ -277,12 +274,11 @@ where
 
                 info!("Removed network with SSID {}", network.ssid);
 
-                NetworkConfigResponse {
+                writer.set(NetworkConfigResponse {
                     status: NetworkCommissioningStatus::Success,
                     debug_text: None,
                     network_index: Some(index as _),
-                }
-                .to_tlv(&mut tw, TagType::Anonymous)?;
+                })?;
             } else {
                 warn!(
                     "Network with SSID {} not found",
@@ -290,12 +286,11 @@ where
                 );
 
                 // Not found
-                NetworkConfigResponse {
+                writer.set(NetworkConfigResponse {
                     status: NetworkCommissioningStatus::NetworkIdNotFound,
                     debug_text: None,
                     network_index: None,
-                }
-                .to_tlv(&mut tw, TagType::Anonymous)?;
+                })?;
             }
 
             Ok(())
@@ -346,7 +341,7 @@ where
                 .iter()
                 .position(|conf| conf.ssid.as_str().as_bytes() == req.network_id.0);
 
-            let mut tw = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
+            let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
 
             if let Some(index) = index {
                 // Found
@@ -367,12 +362,11 @@ where
                         req.index
                     );
 
-                    NetworkConfigResponse {
+                    writer.set(NetworkConfigResponse {
                         status: NetworkCommissioningStatus::Success,
                         debug_text: None,
                         network_index: Some(req.index as _),
-                    }
-                    .to_tlv(&mut tw, TagType::Anonymous)?;
+                    })?;
                 } else {
                     warn!(
                         "Reordering network with SSID {} to index {} failed: out of range",
@@ -380,12 +374,11 @@ where
                         req.index
                     );
 
-                    NetworkConfigResponse {
+                    writer.set(NetworkConfigResponse {
                         status: NetworkCommissioningStatus::OutOfRange,
                         debug_text: None,
                         network_index: Some(req.index as _),
-                    }
-                    .to_tlv(&mut tw, TagType::Anonymous)?;
+                    })?;
                 }
             } else {
                 warn!(
@@ -394,12 +387,11 @@ where
                 );
 
                 // Not found
-                NetworkConfigResponse {
+                writer.set(NetworkConfigResponse {
                     status: NetworkCommissioningStatus::NetworkIdNotFound,
                     debug_text: None,
                     network_index: None,
-                }
-                .to_tlv(&mut tw, TagType::Anonymous)?;
+                })?;
             }
 
             Ok(())

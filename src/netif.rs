@@ -3,15 +3,20 @@
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
+use alloc::sync::Arc;
+
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::netif::{EspNetif, IpEvent};
 use esp_idf_svc::sys::{esp, esp_netif_get_ip6_linklocal, EspError, ESP_FAIL};
 
 use log::info;
+
+use rs_matter::utils::notification::Notification;
 
 use crate::error::Error;
 
@@ -24,15 +29,22 @@ pub trait NetifAccess {
     where
         F: FnMut(&EspNetif) -> Result<Option<R>, Error>,
     {
-        // TODO: Maybe wait on Wifi and Eth events as well
-        let mut subscription = sysloop.subscribe_async::<IpEvent>()?;
+        let notification = Arc::new(Notification::<EspRawMutex>::new());
+
+        let _subscription = {
+            let notification = notification.clone();
+
+            sysloop.subscribe::<IpEvent, _>(move |_| {
+                notification.notify();
+            })
+        }?;
 
         loop {
             if let Some(result) = self.with_netif(&mut f).await? {
                 break Ok(result);
             }
 
-            let mut events = pin!(subscription.recv());
+            let mut events = pin!(notification.wait());
             let mut timer = pin!(Timer::after(Duration::from_secs(5)));
 
             select(&mut events, &mut timer).await;

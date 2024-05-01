@@ -24,7 +24,7 @@ use esp_idf_svc::bt::{BdAddr, BleEnabled, BtDriver, BtStatus, BtUuid};
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
 use esp_idf_svc::sys::{EspError, ESP_FAIL};
 
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use rs_matter::error::ErrorCode;
 use rs_matter::transport::network::btp::{
@@ -304,7 +304,7 @@ where
         if let Some((gatts_if, conn_id, attr_handle)) = conn {
             self.gatts.indicate(gatts_if, conn_id, attr_handle, data)?;
 
-            info!("Indicated {} bytes to {address}", data.len());
+            debug!("Indicated {} bytes to {address}", data.len());
 
             Ok(true)
         } else {

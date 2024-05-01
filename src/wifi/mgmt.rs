@@ -6,12 +6,15 @@
 
 use core::pin::pin;
 
+use alloc::sync::Arc;
+
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
 use esp_idf_svc::netif::EspNetif;
 use esp_idf_svc::sys::{EspError, ESP_ERR_INVALID_STATE};
 use esp_idf_svc::wifi::{self as wifi, AsyncWifi, AuthMethod, EspWifi, WifiEvent};
@@ -19,6 +22,7 @@ use esp_idf_svc::wifi::{self as wifi, AsyncWifi, AuthMethod, EspWifi, WifiEvent}
 use log::{error, info, warn};
 
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
+use rs_matter::utils::notification::Notification;
 
 use crate::netif::NetifAccess;
 
@@ -73,6 +77,7 @@ where
 
             let Some(creds) = creds else {
                 // No networks, bail out
+                warn!("No networks found");
                 return Err(EspError::from_infallible::<ESP_ERR_INVALID_STATE>().into());
             };
 
@@ -128,8 +133,15 @@ where
     }
 
     async fn wait_disconnect(&self) -> Result<(), EspError> {
-        // TODO: Maybe wait on Wifi and Eth events as well
-        let mut subscription = self.sysloop.subscribe_async::<WifiEvent>()?;
+        let notification = Arc::new(Notification::<EspRawMutex>::new());
+
+        let _subscription = {
+            let notification = notification.clone();
+
+            self.sysloop.subscribe::<WifiEvent, _>(move |_| {
+                notification.notify();
+            })
+        }?;
 
         loop {
             {
@@ -139,7 +151,7 @@ where
                 }
             }
 
-            let mut events = pin!(subscription.recv());
+            let mut events = pin!(notification.wait());
             let mut timer = pin!(Timer::after(Duration::from_secs(5)));
 
             select(&mut events, &mut timer).await;
@@ -147,6 +159,8 @@ where
     }
 
     async fn connect(&self, creds: &WifiCredentials) -> Result<(), EspError> {
+        info!("Connecting to SSID {}", creds.ssid);
+
         let auth_methods: &[AuthMethod] = if creds.password.is_empty() {
             &[AuthMethod::None]
         } else {
@@ -160,7 +174,6 @@ where
         let mut result = Ok(());
 
         for auth_method in auth_methods.iter().copied() {
-            let connect = !matches!(auth_method, wifi::AuthMethod::None);
             let conf = wifi::Configuration::Client(wifi::ClientConfiguration {
                 ssid: creds.ssid.clone(),
                 auth_method,
@@ -168,7 +181,7 @@ where
                 ..Default::default()
             });
 
-            result = self.connect_with(&conf, connect).await;
+            result = self.connect_with(&conf).await;
 
             if result.is_ok() {
                 break;
@@ -178,21 +191,35 @@ where
         result
     }
 
-    async fn connect_with(
-        &self,
-        conf: &wifi::Configuration,
-        connect: bool,
-    ) -> Result<(), EspError> {
+    async fn connect_with(&self, conf: &wifi::Configuration) -> Result<(), EspError> {
+        info!("Connecting with {:?}", conf);
+
         let mut wifi = self.wifi.lock().await;
 
         let _ = wifi.stop().await;
 
         wifi.set_configuration(conf)?;
+        info!("Configuration set");
+
         wifi.start().await?;
 
+        info!("Wifi driver started");
+
+        let connect = matches!(conf, wifi::Configuration::Client(_))
+            && !matches!(
+                conf,
+                wifi::Configuration::Client(wifi::ClientConfiguration {
+                    auth_method: wifi::AuthMethod::None,
+                    ..
+                })
+            );
+
         if connect {
+            info!("Connecting...");
             wifi.connect().await?;
         }
+
+        info!("Successfully connected with {:?}", conf);
 
         Ok(())
     }

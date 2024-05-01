@@ -2,6 +2,8 @@ use core::cell::RefCell;
 
 use embassy_sync::blocking_mutex::{self, raw::RawMutex};
 
+use log::info;
+
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{self, FromTLV, TLVList, TLVWriter, TagType, ToTLV};
@@ -38,12 +40,16 @@ impl<const N: usize> WifiState<N> {
         if let Some(ssid) = self.connect_requested.take() {
             let creds = self.networks.iter().find(|creds| creds.ssid == ssid);
 
-            if creds.is_some() {
-                return creds.cloned();
+            if let Some(creds) = creds {
+                info!("Trying with requested network first - SSID: {}", creds.ssid);
+
+                return Some(creds.clone());
             }
         }
 
         if let Some(last_ssid) = last_ssid {
+            info!("Looking for network after the one with SSID: {}", last_ssid);
+
             // Return the network positioned after the last one used
 
             let mut networks = self.networks.iter();
@@ -54,13 +60,17 @@ impl<const N: usize> WifiState<N> {
                 }
             }
 
-            let network = networks.next();
-            if network.is_some() {
-                return network.cloned();
+            let creds = networks.next();
+            if let Some(creds) = creds {
+                info!("Trying with next network - SSID: {}", creds.ssid);
+
+                return Some(creds.clone());
             }
         }
 
         // Wrap over
+        info!("Wrapping over");
+
         self.networks.first().cloned()
     }
 

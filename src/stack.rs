@@ -114,9 +114,13 @@ where
         N: NetifAccess,
     {
         loop {
+            info!("Waiting for the network to come up...");
+
             let (ipv4, ipv6) = netif
                 .wait(sysloop.clone(), |netif| Ok(get_ips(netif).ok()))
                 .await?;
+
+            info!("Got network with IPs: IPv4={ipv4}, IPv6={ipv6}");
 
             let socket = async_io::Async::<std::net::UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
@@ -131,6 +135,8 @@ where
             }));
 
             select3(&mut main, &mut mdns, &mut down).coalesce().await?;
+
+            info!("Network change detected");
         }
     }
 
@@ -484,6 +490,9 @@ mod wifible {
                         .coalesce()
                         .await?;
                 }
+
+                // Reset the matter transport to free up sessions and exchanges
+                self.matter().reset();
 
                 let mut wifi = EspWifi::new(&mut modem, sysloop.clone(), Some(nvs.clone()))?;
 

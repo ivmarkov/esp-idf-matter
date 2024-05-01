@@ -76,7 +76,7 @@ where
     }
 }
 
-pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr), Error> {
+pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     let ip_info = netif.get_ip_info()?;
 
     let ipv4: Ipv4Addr = ip_info.ip.octets().into();
@@ -110,7 +110,9 @@ pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr), Error> {
     ]
     .into();
 
-    Ok((ipv4, ipv6))
+    let interface = netif.get_index();
+
+    Ok((ipv4, ipv6, interface))
 }
 
 #[cfg(esp_idf_comp_esp_eth_enabled)]

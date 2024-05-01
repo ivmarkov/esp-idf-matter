@@ -168,8 +168,8 @@ where
             &[AuthMethod::None]
         } else {
             &[
-                AuthMethod::WPA2WPA3Personal,
                 AuthMethod::WPAWPA2Personal,
+                AuthMethod::WPA2WPA3Personal,
                 AuthMethod::WEP,
             ]
         };

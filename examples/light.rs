@@ -44,9 +44,9 @@ fn main() -> Result<(), Error> {
 
     // Run in a higher-prio thread to avoid issues with `async-io` getting
     // confused by the low priority of the ESP IDF main task
-    // Also allocate a large stack as `rs-matter` futures do occupy quite some space
+    // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(60 * 1024)
+        .stack_size(80 * 1024)
         .spawn(run)
         .unwrap();
 

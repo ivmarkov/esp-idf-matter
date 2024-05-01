@@ -116,19 +116,19 @@ where
         loop {
             info!("Waiting for the network to come up...");
 
-            let (ipv4, ipv6) = netif
+            let (ipv4, ipv6, interface) = netif
                 .wait(sysloop.clone(), |netif| Ok(get_ips(netif).ok()))
                 .await?;
 
-            info!("Got network with IPs: IPv4={ipv4}, IPv6={ipv6}");
+            info!("Got network with IPs: IPv4={ipv4}, IPv6={ipv6}, if={interface}");
 
             let socket = async_io::Async::<std::net::UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
             let mut main =
                 pin!(self.run_once(&socket, &socket, nvs.clone(), dev_comm.clone(), &handler));
-            let mut mdns = pin!(self.run_builtin_mdns(ipv4, ipv6));
+            let mut mdns = pin!(self.run_builtin_mdns(ipv4, ipv6, interface));
             let mut down = pin!(netif.wait(sysloop.clone(), |netif| {
-                let prev = Some((ipv4, ipv6));
+                let prev = Some((ipv4, ipv6, interface));
                 let next = get_ips(netif).ok();
 
                 Ok((prev != next).then_some(()))
@@ -212,7 +212,12 @@ where
         Ok(())
     }
 
-    async fn run_builtin_mdns(&self, ipv4: Ipv4Addr, ipv6: Ipv6Addr) -> Result<(), Error> {
+    async fn run_builtin_mdns(
+        &self,
+        ipv4: Ipv4Addr,
+        ipv6: Ipv6Addr,
+        interface: u32,
+    ) -> Result<(), Error> {
         use rs_matter::mdns::{
             Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_BIND_ADDR,
         };
@@ -232,7 +237,7 @@ where
                     ip: ipv4.octets(),
                     ipv6: Some(ipv6.octets()),
                 },
-                Some(0),
+                Some(interface),
             )
             .await?;
 

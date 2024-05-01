@@ -32,6 +32,8 @@ use crate::nvs;
 const MAX_SUBSCRIPTIONS: usize = 3;
 const MAX_IM_BUFFERS: usize = 10;
 const PSM_BUFFER_SIZE: usize = 4096;
+const MAX_RESPONDERS: usize = 4;
+const MAX_BUSY_RESPONDERS: usize = 2;
 
 #[cfg(all(
     not(esp32h2),
@@ -202,12 +204,14 @@ where
         info!(
             "Responder memory: Responder={}B, Runner={}B",
             core::mem::size_of_val(&responder),
-            core::mem::size_of_val(&responder.run::<4, 4>())
+            core::mem::size_of_val(&responder.run::<MAX_RESPONDERS, MAX_BUSY_RESPONDERS>())
         );
 
-        // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultenously)
+        // Run the responder with up to MAX_RESPONDERS handlers (i.e. MAX_RESPONDERS exchanges can be handled simultenously)
         // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-        responder.run::<4, 4>().await?;
+        responder
+            .run::<MAX_RESPONDERS, MAX_BUSY_RESPONDERS>()
+            .await?;
 
         Ok(())
     }
@@ -225,7 +229,7 @@ where
         let socket = async_io::Async::<std::net::UdpSocket>::bind(MDNS_SOCKET_BIND_ADDR)?;
 
         join_multicast_v4(&socket, MDNS_IPV4_BROADCAST_ADDR, Ipv4Addr::UNSPECIFIED)?;
-        join_multicast_v6(&socket, MDNS_IPV6_BROADCAST_ADDR, 0)?;
+        join_multicast_v6(&socket, MDNS_IPV6_BROADCAST_ADDR, interface)?;
 
         self.matter()
             .run_builtin_mdns(

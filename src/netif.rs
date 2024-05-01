@@ -14,8 +14,6 @@ use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::netif::{EspNetif, IpEvent};
 use esp_idf_svc::sys::{esp, esp_netif_get_ip6_linklocal, EspError, ESP_FAIL};
 
-use log::info;
-
 use rs_matter::utils::notification::Notification;
 
 use crate::error::Error;
@@ -85,8 +83,6 @@ pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     }
 
     let mut ipv6: esp_idf_svc::sys::esp_ip6_addr_t = Default::default();
-
-    info!("Waiting for IPv6 address");
 
     esp!(unsafe { esp_netif_get_ip6_linklocal(netif.handle() as _, &mut ipv6) })?;
 

@@ -47,7 +47,6 @@ struct Connection {
     mtu: Option<u16>,
 }
 
-#[derive(Debug, Clone)]
 struct State {
     gatt_if: Option<GattInterface>,
     service_handle: Option<Handle>,
@@ -55,6 +54,7 @@ struct State {
     c2_handle: Option<Handle>,
     c2_cccd_handle: Option<Handle>,
     connections: heapless::Vec<Connection, MAX_CONNECTIONS>,
+    response: GattResponse,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +78,7 @@ impl BtpGattContext {
                 c2_handle: None,
                 c2_cccd_handle: None,
                 connections: heapless::Vec::new(),
+                response: GattResponse::new(),
             })),
             ind: IfMutex::new(IndBuffer {
                 addr: BtAddr([0; 6]),
@@ -361,7 +362,7 @@ where
                 self.register_conn_mtu(conn_id, mtu)?;
             }
             GattsEvent::PeerConnected { conn_id, addr, .. } => {
-                self.create_conn(conn_id, addr, &mut callback)?;
+                self.create_conn(conn_id, addr)?;
             }
             GattsEvent::PeerDisconnected { addr, .. } => {
                 self.delete_conn(addr, &mut callback)?;
@@ -492,7 +493,7 @@ where
                 permissions: enum_set!(Permission::Write),
                 properties: enum_set!(Property::Write),
                 max_len: C1_MAX_LEN,
-                auto_rsp: AutoResponse::ByGatt,
+                auto_rsp: AutoResponse::ByApp,
             },
             &[],
         )?;
@@ -504,7 +505,7 @@ where
                 permissions: enum_set!(Permission::Write | Permission::Read),
                 properties: enum_set!(Property::Indicate),
                 max_len: C2_MAX_LEN,
-                auto_rsp: AutoResponse::ByGatt,
+                auto_rsp: AutoResponse::ByApp,
             },
             &[],
         )?;
@@ -538,7 +539,7 @@ where
 
         if c2 {
             self.gatts.add_descriptor(
-                attr_handle,
+                service_handle,
                 &GattDescriptor {
                     uuid: BtUuid::uuid16(0x2902), // CCCD
                     permissions: enum_set!(Permission::Read | Permission::Write),
@@ -556,9 +557,10 @@ where
         descr_uuid: BtUuid,
     ) -> Result<(), EspError> {
         self.ctx.state.lock(|state| {
-            if descr_uuid == BtUuid::uuid16(0x2902) && state.borrow().c2_handle == Some(attr_handle)
+            if descr_uuid == BtUuid::uuid16(0x2902)
+                && state.borrow().service_handle == Some(service_handle)
             {
-                state.borrow_mut().c2_cccd_handle = Some(service_handle);
+                state.borrow_mut().c2_cccd_handle = Some(attr_handle);
             }
         });
 
@@ -580,15 +582,7 @@ where
         Ok(())
     }
 
-    fn create_conn<F>(
-        &self,
-        conn_id: ConnectionId,
-        addr: BdAddr,
-        callback: &mut F,
-    ) -> Result<(), EspError>
-    where
-        F: FnMut(GattPeripheralEvent),
-    {
+    fn create_conn(&self, conn_id: ConnectionId, addr: BdAddr) -> Result<(), EspError> {
         let added = self.ctx.state.lock(|state| {
             let mut state = state.borrow_mut();
             if state.connections.len() < MAX_CONNECTIONS {
@@ -611,8 +605,6 @@ where
 
         if added {
             self.gap.set_conn_params_conf(addr, 10, 20, 0, 400)?;
-
-            callback(GattPeripheralEvent::NotifySubscribed(BtAddr(addr.into())));
         }
 
         Ok(())
@@ -695,28 +687,30 @@ where
 
         if let Some(event) = event {
             if matches!(event, GattPeripheralEvent::Write { .. }) && need_rsp {
-                let response = if is_prep {
-                    // TODO: Do not allocate on-stack
-                    let mut response = GattResponse::new();
+                if is_prep {
+                    self.ctx.state.lock(|state| {
+                        let mut state = state.borrow_mut();
 
-                    response
-                        .attr_handle(handle)
-                        .auth_req(0)
-                        .offset(0)
-                        .value(value)?;
+                        state
+                            .response
+                            .attr_handle(handle)
+                            .auth_req(0)
+                            .offset(offset)
+                            .value(value)
+                            .map_err(|_| EspError::from_infallible::<ESP_FAIL>())?;
 
-                    Some(response)
+                        self.gatts.send_response(
+                            gatt_if,
+                            conn_id,
+                            trans_id,
+                            GattStatus::Ok,
+                            Some(&state.response),
+                        )
+                    })?;
                 } else {
-                    None
-                };
-
-                self.gatts.send_response(
-                    gatt_if,
-                    conn_id,
-                    trans_id,
-                    GattStatus::Ok,
-                    response.as_ref(),
-                )?;
+                    self.gatts
+                        .send_response(gatt_if, conn_id, trans_id, GattStatus::Ok, None)?;
+                }
             }
 
             callback(event);

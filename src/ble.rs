@@ -33,6 +33,7 @@ use rs_matter::transport::network::btp::{
 };
 use rs_matter::transport::network::BtAddr;
 use rs_matter::utils::ifmutex::IfMutex;
+use rs_matter::utils::signal::Signal;
 
 use crate::error::Error;
 
@@ -66,6 +67,7 @@ struct IndBuffer {
 pub struct BtpGattContext {
     state: Mutex<EspRawMutex, RefCell<State>>,
     ind: IfMutex<EspRawMutex, IndBuffer>,
+    ind_in_flight: Signal<EspRawMutex, bool>,
 }
 
 impl BtpGattContext {
@@ -84,6 +86,7 @@ impl BtpGattContext {
                 addr: BtAddr([0; 6]),
                 data: heapless::Vec::new(),
             }),
+            ind_in_flight: Signal::new(false),
         }
     }
 
@@ -176,9 +179,26 @@ where
         info!("Gatts BTP app registered");
 
         loop {
+            self.context
+                .ind_in_flight
+                .wait(|in_flight| (!*in_flight).then_some(()))
+                .await;
+
             let mut ind = self.context.ind.lock_if(|ind| !ind.data.is_empty()).await;
 
             let ctx = GattExecContext::new(self.app_id, &gap, &gatts, self.context);
+
+            self.context.ind_in_flight.modify(|in_flight| {
+                if !*in_flight {
+                    *in_flight = true;
+                } else {
+                    // Should not happen as the only code that sets in flight to `true`
+                    // is here
+                    unreachable!();
+                }
+
+                (true, ())
+            });
 
             // TODO: Is this asynchronous?
             ctx.indicate(&ind.data, ind.addr)?;
@@ -284,8 +304,12 @@ where
         if let Some((gatts_if, conn_id, attr_handle)) = conn {
             self.gatts.indicate(gatts_if, conn_id, attr_handle, data)?;
 
+            info!("Indicated {} bytes to {address}", data.len());
+
             Ok(true)
         } else {
+            warn!("No connection for {address}, cannot indicate");
+
             Ok(false)
         }
     }
@@ -390,6 +414,20 @@ where
                     &mut callback,
                 )?;
             }
+            GattsEvent::Confirm { status, .. } => {
+                self.check_gatt_status(status)?;
+                self.ctx.ind_in_flight.modify(|in_flight| {
+                    if *in_flight {
+                        *in_flight = false;
+                    } else {
+                        // Should not happen: means we have received a confirmation for
+                        // an indication we did not send.
+                        unreachable!();
+                    }
+
+                    (true, ())
+                });
+            }
             _ => (),
         }
 
@@ -431,11 +469,8 @@ where
         });
 
         self.gap.set_device_name(service_name)?;
-        self.gap.set_raw_adv_conf(
-            &service_adv_data
-                .service_payload_iter()
-                .collect::<heapless::Vec<_, 32>>(),
-        )?;
+        self.gap
+            .set_raw_adv_conf(&service_adv_data.iter().collect::<heapless::Vec<_, 32>>())?;
         self.gatts.create_service(
             gatt_if,
             &GattServiceId {
@@ -649,7 +684,7 @@ where
     {
         let event = self.ctx.state.lock(|state| {
             let mut state = state.borrow_mut();
-            let c2_handle = state.c2_handle;
+            let c1_handle = state.c1_handle;
             let c2_cccd_handle = state.c2_cccd_handle;
 
             let conn = state
@@ -658,9 +693,7 @@ where
                 .find(|conn| conn.conn_id == conn_id)?;
 
             if c2_cccd_handle == Some(handle) {
-                // TODO: What if this needs a response?
-
-                if !is_prep && offset == 0 && value.len() == 2 {
+                if offset == 0 && value.len() == 2 {
                     let value = u16::from_le_bytes([value[0], value[1]]);
                     if value == 0x02 {
                         if !conn.subscribed {
@@ -674,8 +707,7 @@ where
                         return Some(GattPeripheralEvent::NotifyUnsubscribed(BtAddr(addr.into())));
                     }
                 }
-            } else if c2_handle == Some(handle) && offset == 0 {
-                // TODO: Is it safe to report the write before it was confirmed?
+            } else if c1_handle == Some(handle) && offset == 0 {
                 return Some(GattPeripheralEvent::Write {
                     address: BtAddr(addr.into()),
                     data: value,
@@ -686,34 +718,55 @@ where
         });
 
         if let Some(event) = event {
-            if matches!(event, GattPeripheralEvent::Write { .. }) && need_rsp {
-                if is_prep {
-                    self.ctx.state.lock(|state| {
-                        let mut state = state.borrow_mut();
-
-                        state
-                            .response
-                            .attr_handle(handle)
-                            .auth_req(0)
-                            .offset(offset)
-                            .value(value)
-                            .map_err(|_| EspError::from_infallible::<ESP_FAIL>())?;
-
-                        self.gatts.send_response(
-                            gatt_if,
-                            conn_id,
-                            trans_id,
-                            GattStatus::Ok,
-                            Some(&state.response),
-                        )
-                    })?;
-                } else {
-                    self.gatts
-                        .send_response(gatt_if, conn_id, trans_id, GattStatus::Ok, None)?;
-                }
-            }
+            self.send_write_response(
+                gatt_if, conn_id, trans_id, handle, offset, need_rsp, is_prep, value,
+            )?;
 
             callback(event);
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_write_response(
+        &self,
+        gatt_if: GattInterface,
+        conn_id: ConnectionId,
+        trans_id: TransferId,
+        handle: Handle,
+        offset: u16,
+        need_rsp: bool,
+        is_prep: bool,
+        value: &[u8],
+    ) -> Result<(), EspError> {
+        if !need_rsp {
+            return Ok(());
+        }
+
+        if is_prep {
+            self.ctx.state.lock(|state| {
+                let mut state = state.borrow_mut();
+
+                state
+                    .response
+                    .attr_handle(handle)
+                    .auth_req(0)
+                    .offset(offset)
+                    .value(value)
+                    .map_err(|_| EspError::from_infallible::<ESP_FAIL>())?;
+
+                self.gatts.send_response(
+                    gatt_if,
+                    conn_id,
+                    trans_id,
+                    GattStatus::Ok,
+                    Some(&state.response),
+                )
+            })?;
+        } else {
+            self.gatts
+                .send_response(gatt_if, conn_id, trans_id, GattStatus::Ok, None)?;
         }
 
         Ok(())

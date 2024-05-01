@@ -43,7 +43,7 @@ fn main() -> Result<(), Error> {
     // confused by the low priority of the ESP IDF main task
     // Also allocate a large stack as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(40 * 1024)
+        .stack_size(60 * 1024)
         .spawn(run)
         .unwrap();
 

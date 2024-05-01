@@ -1,6 +1,6 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use log::{error, info};
+use log::{error, info, warn};
 
 use rs_matter::data_model::objects::{
     AsyncHandler, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder,
@@ -159,6 +159,8 @@ where
     ) -> Result<(), Error> {
         let mut tw = encoder.with_command(ResponseCommands::ScanNetworksResponse as _)?;
 
+        warn!("Scan network not supported");
+
         Status::new(IMStatusCode::Busy, 0).to_tlv(&mut tw, TagType::Anonymous)?;
 
         Ok(())
@@ -166,7 +168,7 @@ where
 
     fn add_network(
         &self,
-        exchange: &Exchange<'_>,
+        _exchange: &Exchange<'_>,
         req: &AddWifiNetworkRequest<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
@@ -194,7 +196,8 @@ where
                     .unwrap();
 
                 state.changed = true;
-                exchange.matter().notify_changed();
+
+                info!("Updated network with SSID {}", state.networks[index].ssid);
 
                 NetworkConfigResponse {
                     status: NetworkCommissioningStatus::Success,
@@ -216,23 +219,32 @@ where
                         .unwrap(),
                 };
 
-                if state.networks.push(network).is_ok() {
-                    state.changed = true;
-                    exchange.matter().notify_changed();
+                match state.networks.push(network) {
+                    Ok(_) => {
+                        state.changed = true;
 
-                    NetworkConfigResponse {
-                        status: NetworkCommissioningStatus::Success,
-                        debug_text: None,
-                        network_index: Some(state.networks.len() as _),
+                        info!(
+                            "Added network with SSID {}",
+                            state.networks.last().unwrap().ssid
+                        );
+
+                        NetworkConfigResponse {
+                            status: NetworkCommissioningStatus::Success,
+                            debug_text: None,
+                            network_index: Some(state.networks.len() as _),
+                        }
+                        .to_tlv(&mut tw, TagType::Anonymous)?;
                     }
-                    .to_tlv(&mut tw, TagType::Anonymous)?;
-                } else {
-                    NetworkConfigResponse {
-                        status: NetworkCommissioningStatus::BoundsExceeded,
-                        debug_text: None,
-                        network_index: None,
+                    Err(network) => {
+                        warn!("Adding network with SSID {} failed: too many", network.ssid);
+
+                        NetworkConfigResponse {
+                            status: NetworkCommissioningStatus::BoundsExceeded,
+                            debug_text: None,
+                            network_index: None,
+                        }
+                        .to_tlv(&mut tw, TagType::Anonymous)?;
                     }
-                    .to_tlv(&mut tw, TagType::Anonymous)?;
                 }
             }
 
@@ -242,7 +254,7 @@ where
 
     fn remove_network(
         &self,
-        exchange: &Exchange<'_>,
+        _exchange: &Exchange<'_>,
         req: &RemoveNetworkRequest<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
@@ -260,9 +272,10 @@ where
 
             if let Some(index) = index {
                 // Found
-                state.networks.remove(index);
+                let network = state.networks.remove(index);
                 state.changed = true;
-                exchange.matter().notify_changed();
+
+                info!("Removed network with SSID {}", network.ssid);
 
                 NetworkConfigResponse {
                     status: NetworkCommissioningStatus::Success,
@@ -271,6 +284,11 @@ where
                 }
                 .to_tlv(&mut tw, TagType::Anonymous)?;
             } else {
+                warn!(
+                    "Network with SSID {} not found",
+                    core::str::from_utf8(req.network_id.0).unwrap()
+                );
+
                 // Not found
                 NetworkConfigResponse {
                     status: NetworkCommissioningStatus::NetworkIdNotFound,
@@ -295,18 +313,18 @@ where
         // Non-concurrent commissioning scenario (i.e. only BLE is active, and the ESP IDF co-exist mode is not enabled)
         // Notify that we have received a connect command
 
+        let ssid = core::str::from_utf8(req.network_id.0).unwrap();
+
         self.networks.state.lock(|state| {
             let mut state = state.borrow_mut();
 
-            state.connect_requested = Some(
-                core::str::from_utf8(req.network_id.0)
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            );
+            state.connect_requested = Some(ssid.try_into().unwrap());
         });
 
         self.networks.network_connect_requested.notify();
+
+        warn!("Connecting to network with SSID {} not supported due to non-concurrent commissioning in place", ssid);
+        warn!("Response to ConnectNetwork will pend forever");
 
         // Block forever waiting for the firware to restart
         core::future::pending().await
@@ -314,7 +332,7 @@ where
 
     fn reorder_network(
         &self,
-        exchange: &Exchange<'_>,
+        _exchange: &Exchange<'_>,
         req: &ReorderNetworkRequest<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
@@ -342,7 +360,12 @@ where
                         .unwrap();
 
                     state.changed = true;
-                    exchange.matter().notify_changed();
+
+                    info!(
+                        "Network with SSID {} reordered to index {}",
+                        core::str::from_utf8(req.network_id.0).unwrap(),
+                        req.index
+                    );
 
                     NetworkConfigResponse {
                         status: NetworkCommissioningStatus::Success,
@@ -351,6 +374,12 @@ where
                     }
                     .to_tlv(&mut tw, TagType::Anonymous)?;
                 } else {
+                    warn!(
+                        "Reordering network with SSID {} to index {} failed: out of range",
+                        core::str::from_utf8(req.network_id.0).unwrap(),
+                        req.index
+                    );
+
                     NetworkConfigResponse {
                         status: NetworkCommissioningStatus::OutOfRange,
                         debug_text: None,
@@ -359,6 +388,11 @@ where
                     .to_tlv(&mut tw, TagType::Anonymous)?;
                 }
             } else {
+                warn!(
+                    "Network with SSID {} not found",
+                    core::str::from_utf8(req.network_id.0).unwrap()
+                );
+
                 // Not found
                 NetworkConfigResponse {
                     status: NetworkCommissioningStatus::NetworkIdNotFound,

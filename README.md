@@ -31,15 +31,16 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{Error, MatterStack, WifiBle};
+use esp_idf_matter::{init_async_io, Error, MatterStack, WifiBle};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::hal::task::block_on;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
 
-use log::info;
+use log::{error, info};
 
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::cluster_on_off;
@@ -58,23 +59,40 @@ mod dev_att;
 fn main() -> Result<(), Error> {
     EspLogger::initialize_default();
 
-    // We'll use `async-io` for networking, so ESP IDF VFS needs to be initialized
-    esp_idf_svc::io::vfs::initialize_eventfd(3)?;
-
     info!("Starting...");
 
     // Run in a higher-prio thread to avoid issues with `async-io` getting
     // confused by the low priority of the ESP IDF main task
-    // Also allocate a large stack as `rs-matter` futures do occupy quite some space
+    // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(60 * 1024)
-        .spawn(run)
+        .stack_size(65 * 1024)
+        .spawn(|| {
+            // Eagerly initialize `async-io` to minimize the risk of stack blowups later on
+            init_async_io()?;
+
+            run()
+        })
         .unwrap();
 
     thread.join().unwrap()
 }
 
+#[inline(never)]
+#[cold]
 fn run() -> Result<(), Error> {
+    let result = block_on(matter());
+
+    if let Err(e) = &result {
+        error!("Matter aborted execution with error: {:?}", e);
+    }
+    {
+        info!("Matter finished execution successfully");
+    }
+
+    result
+}
+
+async fn matter() -> Result<(), Error> {
     // Take the Matter stack (can be done only once),
     // as we'll run it in this thread
     let stack = MATTER_STACK.take();
@@ -147,9 +165,7 @@ fn run() -> Result<(), Error> {
     });
 
     // Schedule the Matter run & the device loop together
-    esp_idf_svc::hal::task::block_on(select(&mut matter, &mut device).coalesce())?;
-
-    Ok(())
+    select(&mut matter, &mut device).coalesce().await
 }
 
 /// The Matter stack is allocated statically to avoid

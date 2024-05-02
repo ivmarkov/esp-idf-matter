@@ -8,7 +8,7 @@
 
 ## Overview
 
-Configuring and running the [`rs-matter`](https://github.com/project-chip/rs-matter) stack is not trivial.
+Configuring and running the [`rs-matter`](https://github.com/project-chip/rs-matter) crate is not trivial.
 
 Users are expected to provide implementations for various `rs-matter` abstractions, like a UDP stack, BLE stack, randomizer, epoch time, responder and so on and so forth. 
 

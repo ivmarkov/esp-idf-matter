@@ -1,3 +1,5 @@
+use core::borrow::Borrow;
+use core::cell::RefCell;
 use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
 use core::time::Duration;
@@ -11,31 +13,44 @@ use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsPartitionId};
 
 use log::info;
 
-use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
+use rs_matter::acl::AclMgr;
+use rs_matter::data_model::cluster_basic_information::{self, BasicInfoCluster, BasicInfoConfig};
 use rs_matter::data_model::core::IMBuffer;
-use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
-use rs_matter::data_model::root_endpoint;
+use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, EmptyHandler, HandlerCompat};
+use rs_matter::data_model::sdm::admin_commissioning::AdminCommCluster;
 use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
+use rs_matter::data_model::sdm::failsafe::FailSafe;
+use rs_matter::data_model::sdm::general_commissioning::GenCommCluster;
+use rs_matter::data_model::sdm::general_diagnostics::GenDiagCluster;
+use rs_matter::data_model::sdm::group_key_management::GrpKeyMgmtCluster;
+use rs_matter::data_model::sdm::noc::NocCluster;
+use rs_matter::data_model::sdm::{
+    admin_commissioning, general_commissioning, general_diagnostics, group_key_management, noc,
+    nw_commissioning,
+};
 use rs_matter::data_model::subscriptions::Subscriptions;
+use rs_matter::data_model::system_model::access_control::AccessControlCluster;
+use rs_matter::data_model::system_model::descriptor::DescriptorCluster;
+use rs_matter::data_model::system_model::{access_control, descriptor};
 use rs_matter::error::ErrorCode;
+use rs_matter::fabric::FabricMgr;
+use rs_matter::mdns::Mdns;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
+use rs_matter::secure_channel::pake::PaseMgr;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
 use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
+use rs_matter::utils::epoch::Epoch;
+use rs_matter::utils::rand::Rand;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::{CommissioningData, Matter, MATTER_PORT};
+use rs_matter::{handler_chain_type, CommissioningData, Matter, MATTER_PORT};
 
 use crate::error::Error;
 use crate::multicast::{join_multicast_v4, join_multicast_v6};
 use crate::netif::{get_ips, NetifAccess};
 use crate::nvs;
 
-const MAX_SUBSCRIPTIONS: usize = 3;
-const MAX_IM_BUFFERS: usize = 10;
-const PSM_BUFFER_SIZE: usize = 4096;
-const MAX_RESPONDERS: usize = 4;
-const MAX_BUSY_RESPONDERS: usize = 2;
-
+pub use eth::*;
 #[cfg(all(
     not(esp32h2),
     not(esp32s2),
@@ -47,14 +62,17 @@ const MAX_BUSY_RESPONDERS: usize = 2;
 ))]
 pub use wifible::*;
 
+const MAX_SUBSCRIPTIONS: usize = 3;
+const MAX_IM_BUFFERS: usize = 10;
+const PSM_BUFFER_SIZE: usize = 4096;
+const MAX_RESPONDERS: usize = 4;
+const MAX_BUSY_RESPONDERS: usize = 2;
+
+mod eth;
+mod wifible;
+
 pub trait Network {
     const INIT: Self;
-}
-
-pub struct Eth(());
-
-impl Network for Eth {
-    const INIT: Self = Self(());
 }
 
 pub struct MatterStack<'a, T>
@@ -269,39 +287,116 @@ where
     }
 }
 
-impl<'a> MatterStack<'a, Eth> {
-    pub const fn root_metadata() -> Endpoint<'static> {
-        root_endpoint::endpoint(0)
-    }
+pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
+    NWCOMM,
+    NWDIAG,
+    HandlerCompat<descriptor::DescriptorCluster<'a>>,
+    HandlerCompat<cluster_basic_information::BasicInfoCluster<'a>>,
+    HandlerCompat<general_commissioning::GenCommCluster<'a>>,
+    HandlerCompat<admin_commissioning::AdminCommCluster<'a>>,
+    HandlerCompat<noc::NocCluster<'a>>,
+    HandlerCompat<access_control::AccessControlCluster<'a>>,
+    HandlerCompat<general_diagnostics::GenDiagCluster>,
+    HandlerCompat<group_key_management::GrpKeyMgmtCluster>
+);
 
-    pub fn root_handler(&self) -> impl AsyncHandler + '_ {
-        HandlerCompat(root_endpoint::handler(0, self.matter()))
-    }
+pub fn handler<'a, NWCOMM, NWDIAG, T>(
+    endpoint_id: u16,
+    matter: &'a T,
+    nwcomm: NWCOMM,
+    nwdiag_id: u32,
+    nwdiag: NWDIAG,
+) -> RootEndpointHandler<'a, NWCOMM, NWDIAG>
+where
+    T: Borrow<BasicInfoConfig<'a>>
+        + Borrow<dyn DevAttDataFetcher + 'a>
+        + Borrow<RefCell<PaseMgr>>
+        + Borrow<RefCell<FabricMgr>>
+        + Borrow<RefCell<AclMgr>>
+        + Borrow<RefCell<FailSafe>>
+        + Borrow<dyn Mdns + 'a>
+        + Borrow<Epoch>
+        + Borrow<Rand>
+        + 'a,
+{
+    wrap(
+        endpoint_id,
+        matter.borrow(),
+        matter.borrow(),
+        matter.borrow(),
+        matter.borrow(),
+        matter.borrow(),
+        matter.borrow(),
+        matter.borrow(),
+        *matter.borrow(),
+        *matter.borrow(),
+        nwcomm,
+        nwdiag_id,
+        nwdiag,
+    )
+}
 
-    pub async fn run<'d, T, P, E>(
-        &self,
-        sysloop: EspSystemEventLoop,
-        nvs: EspNvsPartition<P>,
-        eth: E,
-        dev_comm: CommissioningData,
-        handler: T,
-    ) -> Result<(), Error>
-    where
-        T: AsyncHandler + AsyncMetadata,
-        P: NvsPartitionId,
-        E: NetifAccess,
-    {
-        info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
-
-        self.run_with_netif(
-            sysloop,
-            nvs,
-            eth,
-            Some((dev_comm, DiscoveryCapabilities::new(true, false, false))),
-            handler,
+#[allow(clippy::too_many_arguments)]
+fn wrap<'a, NWCOMM, NWDIAG>(
+    endpoint_id: u16,
+    basic_info: &'a BasicInfoConfig<'a>,
+    dev_att: &'a dyn DevAttDataFetcher,
+    pase: &'a RefCell<PaseMgr>,
+    fabric: &'a RefCell<FabricMgr>,
+    acl: &'a RefCell<AclMgr>,
+    failsafe: &'a RefCell<FailSafe>,
+    mdns: &'a dyn Mdns,
+    epoch: Epoch,
+    rand: Rand,
+    nwcomm: NWCOMM,
+    nwdiag_id: u32,
+    nwdiag: NWDIAG,
+) -> RootEndpointHandler<'a, NWCOMM, NWDIAG> {
+    EmptyHandler
+        .chain(
+            endpoint_id,
+            group_key_management::ID,
+            HandlerCompat(GrpKeyMgmtCluster::new(rand)),
         )
-        .await
-    }
+        .chain(
+            endpoint_id,
+            general_diagnostics::ID,
+            HandlerCompat(GenDiagCluster::new(rand)),
+        )
+        .chain(
+            endpoint_id,
+            access_control::ID,
+            HandlerCompat(AccessControlCluster::new(acl, rand)),
+        )
+        .chain(
+            endpoint_id,
+            noc::ID,
+            HandlerCompat(NocCluster::new(
+                dev_att, fabric, acl, failsafe, mdns, epoch, rand,
+            )),
+        )
+        .chain(
+            endpoint_id,
+            admin_commissioning::ID,
+            HandlerCompat(AdminCommCluster::new(pase, mdns, rand)),
+        )
+        .chain(
+            endpoint_id,
+            general_commissioning::ID,
+            HandlerCompat(GenCommCluster::new(failsafe, false, rand)),
+        )
+        .chain(
+            endpoint_id,
+            cluster_basic_information::ID,
+            HandlerCompat(BasicInfoCluster::new(basic_info, rand)),
+        )
+        .chain(
+            endpoint_id,
+            descriptor::ID,
+            HandlerCompat(DescriptorCluster::new(rand)),
+        )
+        .chain(endpoint_id, nwdiag_id, nwdiag)
+        .chain(endpoint_id, nw_commissioning::ID, nwcomm)
 }
 
 #[inline(never)]
@@ -323,360 +418,4 @@ async fn init_async_io_async() {
     // Force the `async-io` lazy initialization to trigger earlier rather than later,
     // as it consumes a lot of temp stack memory
     async_io::Timer::after(Duration::from_millis(100)).await;
-}
-
-#[cfg(all(
-    not(esp32h2),
-    not(esp32s2),
-    esp_idf_comp_esp_wifi_enabled,
-    esp_idf_comp_esp_event_enabled,
-    not(esp_idf_btdm_ctrl_mode_br_edr_only),
-    esp_idf_bt_enabled,
-    esp_idf_bt_bluedroid_enabled
-))]
-mod wifible {
-    use core::borrow::Borrow;
-    use core::cell::RefCell;
-    use core::pin::pin;
-
-    use alloc::boxed::Box;
-
-    use embassy_futures::select::select;
-    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-    use embassy_sync::mutex::Mutex;
-
-    use esp_idf_svc::bt::{Ble, BleEnabled, BtDriver};
-    use esp_idf_svc::eventloop::EspSystemEventLoop;
-    use esp_idf_svc::hal::modem::Modem;
-    use esp_idf_svc::hal::peripheral::Peripheral;
-    use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
-    use esp_idf_svc::nvs::EspDefaultNvsPartition;
-    use esp_idf_svc::timer::EspTaskTimerService;
-    use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
-
-    use log::info;
-
-    use rs_matter::acl::AclMgr;
-    use rs_matter::data_model::cluster_basic_information::{
-        self, BasicInfoCluster, BasicInfoConfig,
-    };
-    use rs_matter::data_model::objects::{
-        AsyncHandler, AsyncMetadata, Cluster, EmptyHandler, Endpoint, HandlerCompat,
-    };
-    use rs_matter::data_model::sdm::admin_commissioning::AdminCommCluster;
-    use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
-    use rs_matter::data_model::sdm::failsafe::FailSafe;
-    use rs_matter::data_model::sdm::general_commissioning::GenCommCluster;
-    use rs_matter::data_model::sdm::general_diagnostics::GenDiagCluster;
-    use rs_matter::data_model::sdm::group_key_management::GrpKeyMgmtCluster;
-    use rs_matter::data_model::sdm::noc::NocCluster;
-    use rs_matter::data_model::sdm::{
-        admin_commissioning, general_commissioning, general_diagnostics, group_key_management, noc,
-        nw_commissioning,
-    };
-    use rs_matter::data_model::system_model::access_control::AccessControlCluster;
-    use rs_matter::data_model::system_model::descriptor::DescriptorCluster;
-    use rs_matter::data_model::system_model::{access_control, descriptor};
-    use rs_matter::fabric::FabricMgr;
-    use rs_matter::mdns::Mdns;
-    use rs_matter::pairing::DiscoveryCapabilities;
-    use rs_matter::secure_channel::pake::PaseMgr;
-    use rs_matter::transport::network::btp::{Btp, BtpContext};
-    use rs_matter::utils::epoch::Epoch;
-    use rs_matter::utils::rand::Rand;
-    use rs_matter::utils::select::Coalesce;
-    use rs_matter::{handler_chain_type, CommissioningData};
-
-    use crate::ble::{BtpGattContext, BtpGattPeripheral};
-    use crate::error::Error;
-    use crate::wifi::comm::WifiNwCommCluster;
-    use crate::wifi::diag::WifiNwDiagCluster;
-    use crate::wifi::mgmt::WifiManager;
-    use crate::wifi::{comm, diag, WifiContext};
-    use crate::{MatterStack, Network};
-
-    const MAX_WIFI_NETWORKS: usize = 2;
-    const GATTS_APP_ID: u16 = 0;
-
-    pub struct WifiBle {
-        btp_context: BtpContext<EspRawMutex>,
-        btp_gatt_context: BtpGattContext,
-        wifi_context: WifiContext<MAX_WIFI_NETWORKS, NoopRawMutex>,
-    }
-
-    impl WifiBle {
-        const fn new() -> Self {
-            Self {
-                btp_context: BtpContext::new(),
-                btp_gatt_context: BtpGattContext::new(),
-                wifi_context: WifiContext::new(),
-            }
-        }
-    }
-
-    impl Network for WifiBle {
-        const INIT: Self = Self::new();
-    }
-
-    impl<'a> MatterStack<'a, WifiBle> {
-        pub const fn root_metadata() -> Endpoint<'static> {
-            Endpoint {
-                id: 0,
-                device_type: rs_matter::data_model::device_types::DEV_TYPE_ROOT_NODE,
-                clusters: &CLUSTERS,
-            }
-        }
-
-        pub fn root_handler(&self) -> RootEndpointHandler<'_> {
-            handler(0, self.matter(), &self.network.wifi_context)
-        }
-
-        pub async fn is_commissioned(&self, _nvs: EspDefaultNvsPartition) -> Result<bool, Error> {
-            // TODO
-            Ok(false)
-        }
-
-        pub async fn operate<'d, T>(
-            &self,
-            sysloop: EspSystemEventLoop,
-            timer_service: EspTaskTimerService,
-            nvs: EspDefaultNvsPartition,
-            wifi: &mut EspWifi<'d>,
-            handler: T,
-        ) -> Result<(), Error>
-        where
-            T: AsyncHandler + AsyncMetadata,
-        {
-            info!("Running Matter in operating mode (Wifi)");
-
-            let wifi = Mutex::<NoopRawMutex, _>::new(AsyncWifi::wrap(
-                wifi,
-                sysloop.clone(),
-                timer_service,
-            )?);
-
-            let mgr = WifiManager::new(&wifi, &self.network.wifi_context, sysloop.clone());
-
-            let mut main = pin!(self.run_with_netif(sysloop, nvs, &wifi, None, handler));
-            let mut wifi = pin!(mgr.run());
-
-            select(&mut wifi, &mut main).coalesce().await
-        }
-
-        pub async fn commission<'d, T, M>(
-            &'static self,
-            nvs: EspDefaultNvsPartition,
-            bt: &BtDriver<'d, M>,
-            dev_comm: CommissioningData,
-            handler: T,
-        ) -> Result<(), Error>
-        where
-            T: AsyncHandler + AsyncMetadata,
-            M: BleEnabled,
-        {
-            info!("Running Matter in commissioning mode (BLE)");
-
-            let peripheral =
-                BtpGattPeripheral::new(GATTS_APP_ID, bt, &self.network.btp_gatt_context);
-
-            let btp = Btp::new(peripheral, &self.network.btp_context);
-
-            let mut ble = pin!(async {
-                btp.run("BT", self.matter().dev_det(), &dev_comm)
-                    .await
-                    .map_err(Into::into)
-            });
-            let mut main = pin!(self.run_once(
-                &btp,
-                &btp,
-                nvs,
-                Some((
-                    dev_comm.clone(),
-                    DiscoveryCapabilities::new(false, true, false)
-                )),
-                &handler
-            ));
-
-            select(&mut ble, &mut main).coalesce().await
-        }
-
-        pub async fn run<'d, T>(
-            &'static self,
-            sysloop: EspSystemEventLoop,
-            timer_service: EspTaskTimerService,
-            nvs: EspDefaultNvsPartition,
-            mut modem: impl Peripheral<P = Modem> + 'd,
-            dev_comm: CommissioningData,
-            handler: T,
-        ) -> Result<(), Error>
-        where
-            T: AsyncHandler + AsyncMetadata,
-        {
-            info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
-
-            loop {
-                if !self.is_commissioned(nvs.clone()).await? {
-                    let bt = BtDriver::<Ble>::new(&mut modem, Some(nvs.clone()))?;
-
-                    info!("BLE driver initialized");
-
-                    let mut main =
-                        pin!(self.commission(nvs.clone(), &bt, dev_comm.clone(), &handler));
-                    let mut wait_network_connect =
-                        pin!(self.network.wifi_context.wait_network_connect());
-
-                    select(&mut main, &mut wait_network_connect)
-                        .coalesce()
-                        .await?;
-                }
-
-                // Reset the matter transport to free up sessions and exchanges
-                self.matter().reset();
-
-                let mut wifi = Box::new(EspWifi::new(
-                    &mut modem,
-                    sysloop.clone(),
-                    Some(nvs.clone()),
-                )?);
-
-                info!("Wifi driver initialized");
-
-                self.operate(
-                    sysloop.clone(),
-                    timer_service.clone(),
-                    nvs.clone(),
-                    &mut wifi,
-                    &handler,
-                )
-                .await?;
-            }
-        }
-    }
-
-    pub type RootEndpointHandler<'a> = handler_chain_type!(
-        HandlerCompat<descriptor::DescriptorCluster<'a>>,
-        HandlerCompat<cluster_basic_information::BasicInfoCluster<'a>>,
-        HandlerCompat<general_commissioning::GenCommCluster<'a>>,
-        comm::WifiNwCommCluster<'a, MAX_WIFI_NETWORKS, NoopRawMutex>,
-        HandlerCompat<admin_commissioning::AdminCommCluster<'a>>,
-        HandlerCompat<noc::NocCluster<'a>>,
-        HandlerCompat<access_control::AccessControlCluster<'a>>,
-        HandlerCompat<general_diagnostics::GenDiagCluster>,
-        HandlerCompat<diag::WifiNwDiagCluster>,
-        HandlerCompat<group_key_management::GrpKeyMgmtCluster>
-    );
-
-    const CLUSTERS: [Cluster<'static>; 10] = [
-        descriptor::CLUSTER,
-        cluster_basic_information::CLUSTER,
-        general_commissioning::CLUSTER,
-        nw_commissioning::WIFI_CLUSTER,
-        admin_commissioning::CLUSTER,
-        noc::CLUSTER,
-        access_control::CLUSTER,
-        general_diagnostics::CLUSTER,
-        diag::CLUSTER,
-        group_key_management::CLUSTER,
-    ];
-
-    fn handler<'a, T>(
-        endpoint_id: u16,
-        matter: &'a T,
-        networks: &'a WifiContext<MAX_WIFI_NETWORKS, NoopRawMutex>,
-    ) -> RootEndpointHandler<'a>
-    where
-        T: Borrow<BasicInfoConfig<'a>>
-            + Borrow<dyn DevAttDataFetcher + 'a>
-            + Borrow<RefCell<PaseMgr>>
-            + Borrow<RefCell<FabricMgr>>
-            + Borrow<RefCell<AclMgr>>
-            + Borrow<RefCell<FailSafe>>
-            + Borrow<dyn Mdns + 'a>
-            + Borrow<Epoch>
-            + Borrow<Rand>
-            + 'a,
-    {
-        wrap(
-            endpoint_id,
-            matter.borrow(),
-            matter.borrow(),
-            matter.borrow(),
-            matter.borrow(),
-            matter.borrow(),
-            matter.borrow(),
-            matter.borrow(),
-            *matter.borrow(),
-            *matter.borrow(),
-            networks,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn wrap<'a>(
-        endpoint_id: u16,
-        basic_info: &'a BasicInfoConfig<'a>,
-        dev_att: &'a dyn DevAttDataFetcher,
-        pase: &'a RefCell<PaseMgr>,
-        fabric: &'a RefCell<FabricMgr>,
-        acl: &'a RefCell<AclMgr>,
-        failsafe: &'a RefCell<FailSafe>,
-        mdns: &'a dyn Mdns,
-        epoch: Epoch,
-        rand: Rand,
-        networks: &'a WifiContext<MAX_WIFI_NETWORKS, NoopRawMutex>,
-    ) -> RootEndpointHandler<'a> {
-        EmptyHandler
-            .chain(
-                endpoint_id,
-                group_key_management::ID,
-                HandlerCompat(GrpKeyMgmtCluster::new(rand)),
-            )
-            .chain(
-                endpoint_id,
-                diag::ID,
-                HandlerCompat(WifiNwDiagCluster::new(rand)),
-            )
-            .chain(
-                endpoint_id,
-                general_diagnostics::ID,
-                HandlerCompat(GenDiagCluster::new(rand)),
-            )
-            .chain(
-                endpoint_id,
-                access_control::ID,
-                HandlerCompat(AccessControlCluster::new(acl, rand)),
-            )
-            .chain(
-                endpoint_id,
-                noc::ID,
-                HandlerCompat(NocCluster::new(
-                    dev_att, fabric, acl, failsafe, mdns, epoch, rand,
-                )),
-            )
-            .chain(
-                endpoint_id,
-                admin_commissioning::ID,
-                HandlerCompat(AdminCommCluster::new(pase, mdns, rand)),
-            )
-            .chain(
-                endpoint_id,
-                nw_commissioning::ID,
-                WifiNwCommCluster::new(rand, networks),
-            )
-            .chain(
-                endpoint_id,
-                general_commissioning::ID,
-                HandlerCompat(GenCommCluster::new(failsafe, false, rand)),
-            )
-            .chain(
-                endpoint_id,
-                cluster_basic_information::ID,
-                HandlerCompat(BasicInfoCluster::new(basic_info, rand)),
-            )
-            .chain(
-                endpoint_id,
-                descriptor::ID,
-                HandlerCompat(DescriptorCluster::new(rand)),
-            )
-    }
 }

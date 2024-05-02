@@ -6,6 +6,8 @@ use core::pin::pin;
 use alloc::sync::Arc;
 
 use embassy_futures::select::select;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -71,6 +73,30 @@ where
         F: FnOnce(&EspNetif) -> R,
     {
         (**self).with_netif(f).await
+    }
+}
+
+impl NetifAccess for EspNetif {
+    async fn with_netif<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&EspNetif) -> R,
+    {
+        f(self)
+    }
+}
+
+impl<M, T> NetifAccess for Mutex<M, T>
+where
+    M: RawMutex,
+    T: NetifAccess,
+{
+    async fn with_netif<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&EspNetif) -> R,
+    {
+        let netif = self.lock().await;
+
+        netif.with_netif(f).await
     }
 }
 

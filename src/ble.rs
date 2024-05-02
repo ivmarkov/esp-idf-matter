@@ -711,6 +711,7 @@ where
                 return Some(GattPeripheralEvent::Write {
                     address: BtAddr(addr.into()),
                     data: value,
+                    gatt_mtu: conn.mtu,
                 });
             }
 

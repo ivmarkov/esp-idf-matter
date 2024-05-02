@@ -7,9 +7,9 @@ use rs_matter::data_model::objects::{
     CmdDetails, Dataver,
 };
 use rs_matter::data_model::sdm::nw_commissioning::{
-    AddWifiNetworkRequest, Attributes, Commands, ConnectNetworkRequest, NetworkCommissioningStatus,
-    NetworkConfigResponse, NwInfo, RemoveNetworkRequest, ReorderNetworkRequest, ResponseCommands,
-    ScanNetworksRequest, WIFI_CLUSTER,
+    AddWifiNetworkRequest, Attributes, Commands, ConnectNetworkRequest, ConnectNetworkResponse,
+    NetworkCommissioningStatus, NetworkConfigResponse, NwInfo, RemoveNetworkRequest,
+    ReorderNetworkRequest, ResponseCommands, ScanNetworksRequest, WIFI_CLUSTER,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::core::IMStatusCode;
@@ -301,14 +301,18 @@ where
         &self,
         _exchange: &Exchange<'_>,
         req: &ConnectNetworkRequest<'_>,
-        _encoder: CmdDataEncoder<'_, '_, '_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
         // Non-concurrent commissioning scenario (i.e. only BLE is active, and the ESP IDF co-exist mode is not enabled)
-        // Notify that we have received a connect command
 
         let ssid = core::str::from_utf8(req.network_id.0).unwrap();
+
+        info!(
+            "Request to connect to network with SSID {} received",
+            core::str::from_utf8(req.network_id.0).unwrap(),
+        );
 
         self.networks.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -316,13 +320,20 @@ where
             state.connect_requested = Some(ssid.try_into().unwrap());
         });
 
+        let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
+
+        // As per spec, return success even though though whether we'll be able to connect to the network
+        // will become apparent later, once we switch to Wifi
+        writer.set(ConnectNetworkResponse {
+            status: NetworkCommissioningStatus::Success,
+            debug_text: None,
+            error_value: 0,
+        })?;
+
+        // Notify that we have received a connect command
         self.networks.network_connect_requested.notify();
 
-        warn!("Connecting to network with SSID {} not supported due to non-concurrent commissioning in place", ssid);
-        warn!("Response to ConnectNetwork will pend forever");
-
-        // Block forever waiting for the firware to restart
-        core::future::pending().await
+        Ok(())
     }
 
     fn reorder_network(

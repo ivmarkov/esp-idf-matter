@@ -9,6 +9,7 @@
 ))]
 
 use core::borrow::Borrow;
+use core::cell::RefCell;
 use core::pin::pin;
 
 use alloc::boxed::Box;
@@ -32,6 +33,7 @@ use rs_matter::data_model::cluster_basic_information;
 use rs_matter::data_model::objects::{
     AsyncHandler, AsyncMetadata, Cluster, Endpoint, HandlerCompat,
 };
+use rs_matter::data_model::sdm::failsafe::FailSafe;
 use rs_matter::data_model::sdm::{
     admin_commissioning, general_commissioning, general_diagnostics, group_key_management, noc,
     nw_commissioning,
@@ -185,7 +187,13 @@ impl<'a> MatterStack<'a, WifiBle> {
             }
 
             // Reset the matter transport to free up sessions and exchanges
+            // and to clear any PASE sessions and their keys (as per Matter Core spec)
             self.matter().reset();
+
+            // As per spec, we need to indicate the expectation of a re-arm with a CASE session
+            // even if the current session is a PASE one (this is specific for non-concurrent commissiioning flows)
+            let failsafe: &RefCell<FailSafe> = self.matter().borrow();
+            failsafe.borrow_mut().expect_case_rearm()?;
 
             let mut wifi = Box::new(EspWifi::new(
                 &mut modem,

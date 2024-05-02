@@ -1,8 +1,9 @@
 use core::cell::RefCell;
 
 use embassy_sync::blocking_mutex::{self, raw::RawMutex};
+use embassy_time::{Duration, Timer};
 
-use log::info;
+use log::{info, warn};
 
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 use rs_matter::error::{Error, ErrorCode};
@@ -148,6 +149,12 @@ where
 
             self.network_connect_requested.wait().await;
         }
+
+        warn!(
+            "Giving BLE/BTP extra 4 seconds for any outstanding messages before switching to Wifi"
+        );
+
+        Timer::after(Duration::from_secs(4)).await;
 
         Ok(())
     }

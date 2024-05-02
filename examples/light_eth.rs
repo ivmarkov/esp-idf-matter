@@ -13,17 +13,18 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use embedded_svc::wifi;
 use esp_idf_matter::{init_async_io, Error, Eth, MatterStack, WifiBle};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::task::block_on;
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::sys::{esp, esp_netif_create_ip6_linklocal};
 use esp_idf_svc::timer::EspTaskTimerService;
+use esp_idf_svc::wifi::{self, AsyncWifi, EspWifi};
 
-use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
 use log::{error, info};
 
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -100,6 +101,9 @@ async fn matter() -> Result<(), Error> {
     }))?;
     wifi.start().await?;
     wifi.connect().await?;
+
+    // Matter needs an IPv6 address to work
+    esp!(unsafe { esp_netif_create_ip6_linklocal(wifi.wifi().sta_netif().handle() as _) })?;
 
     // Take the Matter stack (can be done only once),
     // as we'll run it in this thread

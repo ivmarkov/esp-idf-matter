@@ -1,8 +1,9 @@
 //! An example utilizing the `MatterStack<WifiBle>` struct.
-//! As the name suggests, this Matter stack assembly uses Wifi as the main transport, and BLE for commissioning.
-//! If use want to use Ethernet, utilize `MatterStack<Eth>` instead.
+//! As the name suggests, this Matter stack assembly uses Wifi as the main transport, 
+//! and BLE for commissioning.
+//! If you want to use Ethernet, utilize `MatterStack<Eth>` instead.
 //!
-//! The example implements a fictitious Light device (an on-off cluster).
+//! The example implements a fictitious Light device (an On-Off Matter cluster).
 
 use core::borrow::Borrow;
 use core::pin::pin;

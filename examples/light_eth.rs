@@ -5,7 +5,7 @@
 //! Instead, we utilize Wifi, which - from the POV of Matter - is indistinguishable from Ethernet as long as the Matter
 //! stack is not concerned with connecting to the Wifi network, managing its credentials etc. and can assume it "pre-exists".
 //!
-//! The example implements a fictitious Light device (an on-off cluster).
+//! The example implements a fictitious Light device (an On-Off Matter cluster).
 
 use core::borrow::Borrow;
 use core::pin::pin;

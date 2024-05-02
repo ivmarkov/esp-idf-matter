@@ -1,10 +1,12 @@
-use core::net::{Ipv4Addr, Ipv6Addr};
+use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
+use core::time::Duration;
 
 use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::task::block_on;
 use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsPartitionId};
 
 use log::info;
@@ -18,7 +20,6 @@ use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::error::ErrorCode;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
 use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
 use rs_matter::utils::select::Coalesce;
@@ -124,7 +125,9 @@ where
 
             info!("Got network with IPs: IPv4={ipv4}, IPv6={ipv6}, if={interface}");
 
-            let socket = async_io::Async::<std::net::UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+            let socket = async_io::Async::<std::net::UdpSocket>::bind(SocketAddr::V6(
+                SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, interface),
+            ))?;
 
             let mut main =
                 pin!(self.run_once(&socket, &socket, nvs.clone(), dev_comm.clone(), &handler));
@@ -223,19 +226,21 @@ where
         interface: u32,
     ) -> Result<(), Error> {
         use rs_matter::mdns::{
-            Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_BIND_ADDR,
+            Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
         };
 
-        let socket = async_io::Async::<std::net::UdpSocket>::bind(MDNS_SOCKET_BIND_ADDR)?;
+        let socket = async_io::Async::<std::net::UdpSocket>::bind(SocketAddr::V6(
+            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, interface),
+        ))?;
 
-        join_multicast_v4(&socket, MDNS_IPV4_BROADCAST_ADDR, Ipv4Addr::UNSPECIFIED)?;
+        join_multicast_v4(&socket, MDNS_IPV4_BROADCAST_ADDR, ipv4)?;
         join_multicast_v6(&socket, MDNS_IPV6_BROADCAST_ADDR, interface)?;
 
         self.matter()
             .run_builtin_mdns(
                 &socket,
                 &socket,
-                Host {
+                &Host {
                     id: 0,
                     hostname: self.matter().dev_det().device_name,
                     ip: ipv4.octets(),
@@ -286,6 +291,8 @@ impl<'a> MatterStack<'a, Eth> {
         P: NvsPartitionId,
         E: NetifAccess,
     {
+        info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
+
         self.run_with_netif(
             sysloop,
             nvs,
@@ -295,6 +302,27 @@ impl<'a> MatterStack<'a, Eth> {
         )
         .await
     }
+}
+
+#[inline(never)]
+#[cold]
+pub fn init_async_io() -> Result<(), Error> {
+    // We'll use `async-io` for networking, so ESP IDF VFS needs to be initialized
+    esp_idf_svc::io::vfs::initialize_eventfd(3)?;
+
+    block_on(init_async_io_async());
+
+    info!("Async IO initialized");
+
+    Ok(())
+}
+
+#[inline(never)]
+#[cold]
+async fn init_async_io_async() {
+    // Force the `async-io` lazy initialization to trigger earlier rather than later,
+    // as it consumes a lot of temp stack memory
+    async_io::Timer::after(Duration::from_millis(100)).await;
 }
 
 #[cfg(all(
@@ -638,7 +666,7 @@ mod wifible {
             .chain(
                 endpoint_id,
                 general_commissioning::ID,
-                HandlerCompat(GenCommCluster::new(failsafe, rand)),
+                HandlerCompat(GenCommCluster::new(failsafe, false, rand)),
             )
             .chain(
                 endpoint_id,

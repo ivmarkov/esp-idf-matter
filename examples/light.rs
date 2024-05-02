@@ -1,5 +1,5 @@
 //! An example utilizing the `MatterStack<WifiBle>` struct.
-//! As the name suggests, this Matter stack assembly uses Wifi as the main transport, 
+//! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
 //! and BLE for commissioning.
 //! If you want to use Ethernet, utilize `MatterStack<Eth>` instead.
 //!

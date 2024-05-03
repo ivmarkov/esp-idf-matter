@@ -14,7 +14,7 @@ Users are expected to provide implementations for various `rs-matter` abstractio
 
 Furthermore, _operating_ the assembled Matter stack is also challenging, as various features might need to be switched on or off depending on whether Matter is running in commissioning or operating mode, and also depending on the current network connectivity (as in e.g. Wifi signal lost).
 
-**This crate addresses these issues by providing an all-in-one [`MatterStack`](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/stack.rs#L57) assembly that configures `rs-matter` for reliably operating on top of the ESP IDF SDK.**
+**This crate addresses these issues by providing an all-in-one [`MatterStack`](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/stack.rs) assembly that configures `rs-matter` for reliably operating on top of the ESP IDF SDK.**
 
 Instantiate it and then call `MatterStack::run(...)`.
 

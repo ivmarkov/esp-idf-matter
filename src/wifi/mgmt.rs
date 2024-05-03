@@ -41,6 +41,17 @@ where
     }
 }
 
+/// A generic Wifi manager.
+///
+/// Utilizes the information w.r.t. Wifi networks that the
+/// Matter stack pushes into the `WifiContext` struct to connect
+/// to one of these networks, in preference order matching the order of the
+/// networks there, and the connect request that might be provided by the
+/// Matter stack.
+///
+/// Also monitors the Wifi connection status and retries the connection
+/// with a backoff strategy and in a round-robin fashion with the other
+/// networks in case of a failure.
 pub struct WifiManager<'a, 'd, const N: usize, M>
 where
     M: RawMutex,
@@ -54,6 +65,7 @@ impl<'a, 'd, const N: usize, M> WifiManager<'a, 'd, N, M>
 where
     M: RawMutex,
 {
+    /// Create a new Wifi manager.
     pub fn new(
         wifi: &'a Mutex<M, AsyncWifi<&'a mut EspWifi<'d>>>,
         context: &'a WifiContext<N, M>,
@@ -66,6 +78,10 @@ where
         }
     }
 
+    /// Runs the Wifi manager.
+    ///
+    /// This function will try to connect to the networks in the `WifiContext`
+    /// and will retry the connection in case of a failure.
     pub async fn run(&self) -> Result<(), crate::error::Error> {
         let mut ssid = None;
 

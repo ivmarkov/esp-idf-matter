@@ -10,6 +10,7 @@ use log::info;
 
 use rs_matter::error::{Error, ErrorCode};
 
+/// Join an IPV6 multicast group on a specific interface
 pub fn join_multicast_v6(
     socket: &Async<UdpSocket>,
     multiaddr: Ipv6Addr,
@@ -22,6 +23,7 @@ pub fn join_multicast_v6(
     Ok(())
 }
 
+/// Join an IPV4 multicast group on a specific interface
 pub fn join_multicast_v4(
     socket: &Async<UdpSocket>,
     multiaddr: Ipv4Addr,

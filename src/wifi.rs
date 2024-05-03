@@ -75,6 +75,14 @@ impl<const N: usize> WifiState<N> {
         self.networks.first().cloned()
     }
 
+    fn reset(&mut self) {
+        self.networks.clear();
+        self.connected_once = false;
+        self.connect_requested = None;
+        self.status = None;
+        self.changed = false;
+    }
+
     fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
@@ -105,6 +113,9 @@ impl<const N: usize> WifiState<N> {
     }
 }
 
+/// The `'static` state of the Wifi module.
+/// Isolated as a separate struct to allow for `const fn` construction
+/// and static allocation.
 pub struct WifiContext<const N: usize, M>
 where
     M: RawMutex,
@@ -117,6 +128,7 @@ impl<const N: usize, M> WifiContext<N, M>
 where
     M: RawMutex,
 {
+    /// Create a new instance.
     pub const fn new() -> Self {
         Self {
             state: blocking_mutex::Mutex::new(RefCell::new(WifiState {
@@ -130,14 +142,25 @@ where
         }
     }
 
+    /// Reset the state.
+    pub fn reset(&self) {
+        self.state.lock(|state| state.borrow_mut().reset());
+    }
+
+    /// Load the state from a byte slice.
     pub fn load(&self, data: &[u8]) -> Result<(), Error> {
         self.state.lock(|state| state.borrow_mut().load(data))
     }
 
+    /// Store the state into a byte slice.
     pub fn store<'m>(&self, buf: &'m mut [u8]) -> Result<Option<&'m [u8]>, Error> {
         self.state.lock(|state| state.borrow_mut().store(buf))
     }
 
+    /// Wait until signalled by the Matter stack that a network connect request is issued during commissioning.
+    ///
+    /// Typically, this is a signal that the BLE/BTP transport should be teared down and
+    /// the Wifi transport should be brought up.
     pub async fn wait_network_connect(&self) -> Result<(), crate::error::Error> {
         loop {
             if self

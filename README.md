@@ -14,15 +14,15 @@ Users are expected to provide implementations for various `rs-matter` abstractio
 
 Furthermore, _operating_ the assembled Matter stack is also challenging, as various features might need to be switched on or off depending on whether Matter is running in commissioning or operating mode, and also depending on the current network connectivity (as in e.g. Wifi signal lost).
 
-This crate addresses these issues by providing an all-in-one [`MatterStack`](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/stack.rs#L57) assembly that configures `rs-matter` for reliably operating on top of the ESP IDF SDK.
+**This crate addresses these issues by providing an all-in-one [`MatterStack`](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/stack.rs#L57) assembly that configures `rs-matter` for reliably operating on top of the ESP IDF SDK.**
 
 Instantiate it and then call `MatterStack::run(...)`.
 
 ```rust
-//! An example utilizing the `MatterStack<WifiBle>` struct.
-//! As the name suggests, this Matter stack assembly uses Wifi as the main transport, 
+//! An example utilizing the `MatterStack<WifiBle, ..>` struct.
+//! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
 //! and BLE for commissioning.
-//! If you want to use Ethernet, utilize `MatterStack<Eth>` instead.
+//! If you want to use Ethernet, utilize `MatterStack<Eth, ..>` instead.
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 
@@ -32,7 +32,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, Error, MatterStack, WifiBle};
+use esp_idf_matter::{init_async_io, BuiltinMdns, Error, MatterStack, WifiBle};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -172,7 +172,7 @@ async fn matter() -> Result<(), Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: ConstStaticCell<MatterStack<WifiBle>> =
+static MATTER_STACK: ConstStaticCell<MatterStack<WifiBle, BuiltinMdns>> =
     ConstStaticCell::new(MatterStack::new(
         &BasicInfoConfig {
             vid: 0xFFF1,
@@ -196,7 +196,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        MatterStack::<WifiBle>::root_metadata(),
+        MatterStack::<WifiBle, BuiltinMdns>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_type: DEV_TYPE_ON_OFF_LIGHT,

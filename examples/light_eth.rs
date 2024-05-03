@@ -1,4 +1,4 @@
-//! An example utilizing the `MatterStack<Eth>` struct.
+//! An example utilizing the `EthMatterStack` struct.
 //! As the name suggests, this Matter stack assembly uses Ethernet as the main transport, as well as for commissioning.
 //!
 //! Notice thart we actually don't use Ethernet for real, as ESP32s don't have Ethernet ports out of the box.
@@ -13,7 +13,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, Error, Eth, MatterStack, WifiBle};
+use esp_idf_matter::{init_async_io, Error, EthMatterStack, MdnsType};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -180,7 +180,7 @@ async fn matter() -> Result<(), Error> {
 
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
-static MATTER_STACK: ConstStaticCell<MatterStack<Eth>> = ConstStaticCell::new(MatterStack::new(
+static MATTER_STACK: ConstStaticCell<EthMatterStack> = ConstStaticCell::new(EthMatterStack::new(
     &BasicInfoConfig {
         vid: 0xFFF1,
         pid: 0x8000,
@@ -193,6 +193,7 @@ static MATTER_STACK: ConstStaticCell<MatterStack<Eth>> = ConstStaticCell::new(Ma
         vendor_name: "ACME",
     },
     &dev_att::HardCodedDevAtt::new(),
+    MdnsType::default(),
 ));
 
 /// Endpoint 0 (the root endpoint) always runs
@@ -203,7 +204,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        MatterStack::<WifiBle>::root_metadata(),
+        EthMatterStack::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_type: DEV_TYPE_ON_OFF_LIGHT,

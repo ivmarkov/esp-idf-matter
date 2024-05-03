@@ -1,7 +1,7 @@
-//! An example utilizing the `MatterStack<WifiBle>` struct.
+//! An example utilizing the `WifiBleMatterStack` struct.
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
 //! and BLE for commissioning.
-//! If you want to use Ethernet, utilize `MatterStack<Eth>` instead.
+//! If you want to use Ethernet, utilize `EthMatterStack` instead.
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 
@@ -11,7 +11,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, Error, MatterStack, WifiBle};
+use esp_idf_matter::{init_async_io, Error, MdnsType, WifiBleMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -151,8 +151,8 @@ async fn matter() -> Result<(), Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: ConstStaticCell<MatterStack<WifiBle>> =
-    ConstStaticCell::new(MatterStack::new(
+static MATTER_STACK: ConstStaticCell<WifiBleMatterStack> =
+    ConstStaticCell::new(WifiBleMatterStack::new(
         &BasicInfoConfig {
             vid: 0xFFF1,
             pid: 0x8000,
@@ -165,6 +165,7 @@ static MATTER_STACK: ConstStaticCell<MatterStack<WifiBle>> =
             vendor_name: "ACME",
         },
         &dev_att::HardCodedDevAtt::new(),
+        MdnsType::default(),
     ));
 
 /// Endpoint 0 (the root endpoint) always runs
@@ -175,7 +176,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        MatterStack::<WifiBle>::root_metadata(),
+        WifiBleMatterStack::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_type: DEV_TYPE_ON_OFF_LIGHT,

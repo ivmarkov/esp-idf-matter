@@ -71,29 +71,52 @@ const MAX_BUSY_RESPONDERS: usize = 2;
 mod eth;
 mod wifible;
 
+/// A trait modeling a specific network type.
+/// `MatterStack` is parameterized by a network type implementing this trait.
 pub trait Network {
     const INIT: Self;
 }
 
-pub struct MatterStack<'a, T>
+/// An enum modeling the mDNS service to be used.
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub enum MdnsType {
+    /// The mDNS service provided by the `rs-matter` crate.
+    #[default]
+    Builtin,
+}
+
+impl MdnsType {
+    pub const fn default() -> Self {
+        Self::Builtin
+    }
+}
+
+/// The `MatterStack` struct is the main entry point for the Matter stack.
+///
+/// It wraps the actual `rs-matter` Matter instance and provides a simplified API for running the stack.
+pub struct MatterStack<'a, N>
 where
-    T: Network,
+    N: Network,
 {
     matter: Matter<'a>,
     buffers: PooledBuffers<MAX_IM_BUFFERS, NoopRawMutex, IMBuffer>,
     psm_buffer: PooledBuffers<1, NoopRawMutex, heapless::Vec<u8, PSM_BUFFER_SIZE>>,
     subscriptions: Subscriptions<MAX_SUBSCRIPTIONS>,
     #[allow(unused)]
-    network: T,
+    network: N,
+    #[allow(unused)]
+    mdns: MdnsType,
 }
 
-impl<'a, T> MatterStack<'a, T>
+impl<'a, N> MatterStack<'a, N>
 where
-    T: Network,
+    N: Network,
 {
+    /// Create a new `MatterStack` instance.
     pub const fn new(
-        dev_det: &'static BasicInfoConfig,
-        dev_att: &'static dyn DevAttDataFetcher,
+        dev_det: &'a BasicInfoConfig,
+        dev_att: &'a dyn DevAttDataFetcher,
+        mdns: MdnsType,
     ) -> Self {
         Self {
             matter: Matter::new_default(
@@ -105,34 +128,51 @@ where
             buffers: PooledBuffers::new(0),
             psm_buffer: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
-            network: T::INIT,
+            network: N::INIT,
+            mdns,
         }
     }
 
+    /// Get a reference to the `Matter` instance.
     pub const fn matter(&self) -> &Matter<'a> {
         &self.matter
     }
 
+    /// Get a reference to the `Network` instance.
+    /// Useful when the user instantiates `MatterStack` with a custom network type.
+    pub const fn network(&self) -> &N {
+        &self.network
+    }
+
+    /// Notifies the Matter instance that there is a change in the state
+    /// of one of the clusters.
+    ///
+    /// User is expected to call this method when user-provided clusters
+    /// change their state.
+    ///
+    /// This is necessary so as the Matter instance can notify clients
+    /// that have active subscriptions to some of the changed clusters.
     pub fn notify_changed(&self) {
         self.subscriptions.notify_changed();
     }
 
-    pub fn reset(&self) {
-        todo!()
-    }
-
-    pub async fn run_with_netif<'d, H, P, N>(
+    /// This method is a specialization of `run_with_transport` over the UDP transport (both IPv4 and IPv6).
+    /// It calls `run_with_transport` and in parallel runs the mDNS service.
+    ///
+    /// The netif instance is necessary, so that the loop can monitor the network and bring up/down
+    /// the main UDP transport and the mDNS service when the netif goes up/down or changes its IP addresses.
+    pub async fn run_with_netif<'d, H, P, E>(
         &self,
         sysloop: EspSystemEventLoop,
         nvs: EspNvsPartition<P>,
-        netif: N,
+        netif: E,
         dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
         handler: H,
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
         P: NvsPartitionId,
-        N: NetifAccess,
+        E: NetifAccess,
     {
         loop {
             info!("Waiting for the network to come up...");
@@ -147,8 +187,13 @@ where
                 SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, interface),
             ))?;
 
-            let mut main =
-                pin!(self.run_once(&socket, &socket, nvs.clone(), dev_comm.clone(), &handler));
+            let mut main = pin!(self.run_with_transport(
+                &socket,
+                &socket,
+                nvs.clone(),
+                dev_comm.clone(),
+                &handler
+            ));
             let mut mdns = pin!(self.run_builtin_mdns(ipv4, ipv6, interface));
             let mut down = pin!(netif.wait(sysloop.clone(), |netif| {
                 let prev = Some((ipv4, ipv6, interface));
@@ -163,7 +208,20 @@ where
         }
     }
 
-    pub async fn run_once<'d, S, R, H, P>(
+    /// A transport-agnostic method to run the main Matter loop.
+    /// The user is expected to provide a transport implementation in the form of
+    /// `NetworkSend` and `NetworkReceive` implementations.
+    ///
+    /// The utility runs the following tasks:
+    /// - The main Matter transport via the user-provided traits
+    /// - The PSM task handling changes to fabrics and ACLs as well as initial load of these from NVS
+    /// - The Matter responder (i.e. handling incoming exchanges)
+    ///
+    /// Unlike `run_with_netif`, this utility method does _not_ run the mDNS service, as the
+    /// user-provided transport might not be IP-based (i.e. BLE).
+    ///
+    /// It also has no facilities for monitoring the transport network state.
+    pub async fn run_with_transport<'d, S, R, H, P>(
         &self,
         send: S,
         recv: R,
@@ -177,7 +235,10 @@ where
         H: AsyncHandler + AsyncMetadata,
         P: NvsPartitionId,
     {
-        let mut psm = pin!(self.run_psm(nvs, nvs::Network::<0, NoopRawMutex>::None));
+        // Reset the Matter transport buffers and all sessions first
+        self.matter().reset();
+
+        let mut psm = pin!(self.run_psm(nvs, nvs::Network::<0, NoopRawMutex>::Eth));
         let mut respond = pin!(self.run_responder(handler));
         let mut transport = pin!(self.run_transport(send, recv, dev_comm));
 
@@ -188,14 +249,14 @@ where
         Ok(())
     }
 
-    async fn run_psm<P, const N: usize, M>(
+    async fn run_psm<P, const W: usize, R>(
         &self,
         nvs: EspNvsPartition<P>,
-        network: nvs::Network<'_, N, M>,
+        network: nvs::Network<'_, W, R>,
     ) -> Result<(), Error>
     where
         P: NvsPartitionId,
-        M: RawMutex,
+        R: RawMutex,
     {
         if false {
             let mut psm_buf = self
@@ -287,6 +348,8 @@ where
     }
 }
 
+/// A type representing the type of the root (Endpoint 0) handler
+/// which is generic over the operational transport clusters (i.e. Ethernet, Wifi or Thread)
 pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
     NWCOMM,
     NWDIAG,
@@ -300,8 +363,11 @@ pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
     HandlerCompat<group_key_management::GrpKeyMgmtCluster>
 );
 
+/// A utility function to instantiate the root (Endpoint 0) handler.
+/// Besides a reference to the main `Matter` object, this function
+/// needs user-supplied implementations of the network commissioning
+/// and network diagnostics clusters.
 pub fn handler<'a, NWCOMM, NWDIAG, T>(
-    endpoint_id: u16,
     matter: &'a T,
     nwcomm: NWCOMM,
     nwdiag_id: u32,
@@ -320,7 +386,7 @@ where
         + 'a,
 {
     wrap(
-        endpoint_id,
+        0,
         matter.borrow(),
         matter.borrow(),
         matter.borrow(),
@@ -399,6 +465,12 @@ fn wrap<'a, NWCOMM, NWDIAG>(
         .chain(endpoint_id, nw_commissioning::ID, nwcomm)
 }
 
+/// A utility function to initialize the `async-io` Reactor which is
+/// used for IP-based networks (UDP and TCP).
+///
+/// User is expected to call this method early in the application's lifecycle
+/// when there is plenty of task stack space available, as the initialization
+/// consumes > 10KB of stack space, so it has to be done with care.
 #[inline(never)]
 #[cold]
 pub fn init_async_io() -> Result<(), Error> {

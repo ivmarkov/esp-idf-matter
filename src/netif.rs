@@ -20,11 +20,28 @@ use rs_matter::utils::notification::Notification;
 
 use crate::error::Error;
 
+const TIMEOUT_PERIOD_SECS: u8 = 5;
+
+/// Async trait for accessing the `EspNetif` network interface (netif) of a driver.
+///
+/// Allows sharing the network interface between multiple tasks, where one task
+/// may be waiting for the network interface to be ready, while the other might
+/// be mutable operating on the L2 driver below the netif, or on the netif itself.
 pub trait NetifAccess {
+    /// Waits until the network interface is available and then
+    /// calls the provided closure with a reference to the network interface.
     async fn with_netif<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&EspNetif) -> R;
 
+    /// Waits until a certain condition `f` becomes `Some` for a network interface
+    /// and then returns the result.
+    ///
+    /// The condition is checked every 5 seconds and every time a new `IpEvent` is
+    /// generated on the ESP IDF system event loop.
+    ///
+    /// The main use case of this method is to wait and listen the netif for changes
+    /// (netif up/down, IP address changes, etc.)
     async fn wait<F, R>(&self, sysloop: EspSystemEventLoop, mut f: F) -> Result<R, Error>
     where
         F: FnMut(&EspNetif) -> Result<Option<R>, Error>,
@@ -45,7 +62,7 @@ pub trait NetifAccess {
             }
 
             let mut events = pin!(notification.wait());
-            let mut timer = pin!(Timer::after(Duration::from_secs(5)));
+            let mut timer = pin!(Timer::after(Duration::from_secs(TIMEOUT_PERIOD_SECS as _)));
 
             select(&mut events, &mut timer).await;
         }
@@ -100,6 +117,9 @@ where
     }
 }
 
+/// Get the IP addresses and the interface index of the network interface.
+///
+/// Return an error when some of the IP addresses are unspecified.
 pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     let ip_info = netif.get_ip_info()?;
 
@@ -137,6 +157,7 @@ pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     Ok((ipv4, ipv6, interface))
 }
 
+/// Implementation of `NetifAccess` for the `EspEth` and `AsyncEth` drivers.
 #[cfg(esp_idf_comp_esp_eth_enabled)]
 #[cfg(any(
     all(esp32, esp_idf_eth_use_esp32_emac),

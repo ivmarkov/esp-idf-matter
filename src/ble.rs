@@ -64,6 +64,9 @@ struct IndBuffer {
     data: heapless::Vec<u8, MAX_MTU_SIZE>,
 }
 
+/// The `'static` state of the `BtpGattPeripheral` struct.
+/// Isolated as a separate struct to allow for `const fn` construction
+/// and static allocation.
 pub struct BtpGattContext {
     state: Mutex<EspRawMutex, RefCell<State>>,
     ind: IfMutex<EspRawMutex, IndBuffer>,
@@ -71,6 +74,7 @@ pub struct BtpGattContext {
 }
 
 impl BtpGattContext {
+    /// Create a new instance.
     pub const fn new() -> Self {
         Self {
             state: Mutex::new(RefCell::new(State {
@@ -90,7 +94,7 @@ impl BtpGattContext {
         }
     }
 
-    pub fn reset(&self) {
+    pub(crate) fn reset(&self) -> Result<(), Error> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
 
@@ -100,6 +104,17 @@ impl BtpGattContext {
             state.c2_handle = None;
             state.c2_cccd_handle = None;
         });
+
+        self.ind_in_flight.modify(|ind_inf_flight| {
+            *ind_inf_flight = false;
+            (false, ())
+        });
+
+        self.ind.try_lock().map(|mut ind| {
+            ind.data.clear();
+        })?;
+
+        Ok(())
     }
 }
 
@@ -109,6 +124,8 @@ impl Default for BtpGattContext {
     }
 }
 
+/// A GATT peripheral implementation for the BTP protocol in `rs-matter`.
+/// Implements the `GattPeripheral` trait.
 pub struct BtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,
@@ -123,14 +140,24 @@ where
     M: BleEnabled,
 {
     /// Create a new instance.
-    pub fn new(app_id: u16, driver: &'a BtDriver<'d, M>, context: &'a BtpGattContext) -> Self {
-        Self {
+    ///
+    /// Creation might fail if the GATT context cannot be reset, so user should ensure
+    /// that there are no other GATT peripherals running before calling this function.
+    pub fn new(
+        app_id: u16,
+        driver: &'a BtDriver<'d, M>,
+        context: &'a BtpGattContext,
+    ) -> Result<Self, Error> {
+        context.reset()?;
+
+        Ok(Self {
             app_id,
             driver,
             context,
-        }
+        })
     }
 
+    /// Run the GATT peripheral.
     pub async fn run<F>(
         &self,
         service_name: &str,

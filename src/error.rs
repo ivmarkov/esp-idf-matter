@@ -1,11 +1,15 @@
 use core::fmt::{self, Display};
 
+use embassy_sync::mutex::TryLockError;
 use esp_idf_svc::sys::EspError;
 
+/// The error used throughout this crate.
+/// A composition of `rs_matter::error::Error` and `EspError`.
 #[derive(Debug)]
 pub enum Error {
     Matter(rs_matter::error::Error),
     Esp(EspError),
+    InvalidState,
 }
 
 impl Display for Error {
@@ -13,6 +17,7 @@ impl Display for Error {
         match self {
             Error::Matter(e) => write!(f, "Matter error: {}", e),
             Error::Esp(e) => write!(f, "ESP error: {}", e),
+            Error::InvalidState => write!(f, "Invalid state"),
         }
     }
 }
@@ -35,6 +40,18 @@ impl From<rs_matter::error::ErrorCode> for Error {
 impl From<EspError> for Error {
     fn from(e: EspError) -> Self {
         Error::Esp(e)
+    }
+}
+
+impl From<TryLockError> for Error {
+    fn from(_: TryLockError) -> Self {
+        Error::InvalidState
+    }
+}
+
+impl From<rs_matter::utils::ifmutex::TryLockError> for Error {
+    fn from(_: rs_matter::utils::ifmutex::TryLockError) -> Self {
+        Error::InvalidState
     }
 }
 

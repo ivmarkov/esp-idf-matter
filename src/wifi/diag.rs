@@ -115,17 +115,20 @@ pub enum ConnectionStatus {
     NotConnected = 1,
 }
 
+/// A cluster implementing the Matter Wifi Diagnostics Cluster.
 pub struct WifiNwDiagCluster {
     data_ver: Dataver,
 }
 
 impl WifiNwDiagCluster {
+    /// Create a new instance.
     pub fn new(rand: Rand) -> Self {
         Self {
             data_ver: Dataver::new(rand),
         }
     }
 
+    /// Read the value of an attribute.
     pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
@@ -148,6 +151,7 @@ impl WifiNwDiagCluster {
         }
     }
 
+    /// Write the value of an attribute.
     pub fn write(&self, _attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         let _data = data.with_dataver(self.data_ver.get())?;
 
@@ -156,6 +160,7 @@ impl WifiNwDiagCluster {
         Ok(())
     }
 
+    /// Invoke a command.
     pub fn invoke(
         &self,
         _exchange: &Exchange,

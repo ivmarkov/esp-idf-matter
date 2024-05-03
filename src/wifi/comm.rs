@@ -20,6 +20,10 @@ use rs_matter::utils::rand::Rand;
 
 use super::{WifiContext, WifiCredentials};
 
+/// A cluster implementing the Matter Network Commissioning Cluster
+/// for managing WiFi networks.
+///
+/// `N` is the maximum number of networks that can be stored.
 pub struct WifiNwCommCluster<'a, const N: usize, M>
 where
     M: RawMutex,
@@ -32,6 +36,7 @@ impl<'a, const N: usize, M> WifiNwCommCluster<'a, N, M>
 where
     M: RawMutex,
 {
+    /// Create a new instance.
     pub fn new(rand: Rand, networks: &'a WifiContext<N, M>) -> Self {
         Self {
             data_ver: Dataver::new(rand),
@@ -39,6 +44,7 @@ where
         }
     }
 
+    /// Read an attribute.
     pub fn read(
         &self,
         attr: &AttrDetails<'_>,
@@ -111,6 +117,7 @@ where
         }
     }
 
+    /// Invoke a command.
     pub async fn invoke(
         &self,
         exchange: &Exchange<'_>,

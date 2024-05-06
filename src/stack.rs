@@ -236,7 +236,7 @@ where
         P: NvsPartitionId,
     {
         // Reset the Matter transport buffers and all sessions first
-        self.matter().reset();
+        self.matter().reset_transport()?;
 
         let mut psm = pin!(self.run_psm(nvs, nvs::Network::<0, NoopRawMutex>::Eth));
         let mut respond = pin!(self.run_responder(handler));

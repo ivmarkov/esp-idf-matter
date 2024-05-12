@@ -43,6 +43,7 @@ use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
 use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::rand::Rand;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::signal::Signal;
 use rs_matter::{handler_chain_type, CommissioningData, Matter, MATTER_PORT};
 
 use crate::error::Error;
@@ -91,6 +92,15 @@ impl MdnsType {
     }
 }
 
+/// A structure for user code that needs to be aware when the IP network is up
+/// and what are its settings
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IpInfo {
+    pub ipv4: Ipv4Addr,
+    pub ipv6: Ipv6Addr,
+    pub interface: u32,
+}
+
 /// The `MatterStack` struct is the main entry point for the Matter stack.
 ///
 /// It wraps the actual `rs-matter` Matter instance and provides a simplified API for running the stack.
@@ -106,6 +116,7 @@ where
     network: N,
     #[allow(unused)]
     mdns: MdnsType,
+    ip_info: Signal<NoopRawMutex, Option<IpInfo>>,
 }
 
 impl<'a, N> MatterStack<'a, N>
@@ -130,6 +141,7 @@ where
             subscriptions: Subscriptions::new(),
             network: N::INIT,
             mdns,
+            ip_info: Signal::new(None),
         }
     }
 
@@ -156,6 +168,24 @@ where
         self.subscriptions.notify_changed();
     }
 
+    /// User code hook to get the IP state of the netif passed to the 
+    /// `run_with_netif` method.
+    /// 
+    /// Useful when user code needs to bring up/down its own IP services depending on
+    /// when the netif controlled by Matter goes up, down or changes its IP configuration.
+    pub async fn get_ip(&self) -> Option<IpInfo> {
+        self.ip_info.wait(|ip_info| Some(ip_info.clone())).await
+    }
+
+    /// User code hook to detect changes to the IP state of the netif passed to the 
+    /// `run_with_netif` method.
+    /// 
+    /// Useful when user code needs to bring up/down its own IP services depending on
+    /// when the netif controlled by Matter goes up, down or changes its IP configuration.
+    pub async fn wait_ip_changed(&self, prev_ip_info: Option<&IpInfo>) -> Option<IpInfo> {
+        self.ip_info.wait(|ip_info| (ip_info.as_ref() != prev_ip_info).then(|| ip_info.clone())).await
+    }
+
     /// This method is a specialization of `run_with_transport` over the UDP transport (both IPv4 and IPv6).
     /// It calls `run_with_transport` and in parallel runs the mDNS service.
     ///
@@ -177,11 +207,36 @@ where
         loop {
             info!("Waiting for the network to come up...");
 
+            let reset_ip_info = || {
+                self.ip_info.modify(|ip_info| {
+                    if ip_info.is_some() {
+                        *ip_info = None;
+                        (true, ())
+                    } else {
+                        (false, ())
+                    }
+                });
+            };
+
+            let _guard = scopeguard::guard((), |_| reset_ip_info());
+
+            reset_ip_info();
+
             let (ipv4, ipv6, interface) = netif
                 .wait(sysloop.clone(), |netif| Ok(get_ips(netif).ok()))
                 .await?;
 
             info!("Got network with IPs: IPv4={ipv4}, IPv6={ipv6}, if={interface}");
+
+            self.ip_info.modify(|ip_info| {
+                *ip_info = Some(IpInfo {
+                    ipv4,
+                    ipv6,
+                    interface,
+                });
+
+                (true, ())
+            });
 
             let socket = async_io::Async::<std::net::UdpSocket>::bind(SocketAddr::V6(
                 SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, interface),

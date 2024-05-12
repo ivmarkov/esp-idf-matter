@@ -26,7 +26,7 @@ const TIMEOUT_PERIOD_SECS: u8 = 5;
 ///
 /// Allows sharing the network interface between multiple tasks, where one task
 /// may be waiting for the network interface to be ready, while the other might
-/// be mutable operating on the L2 driver below the netif, or on the netif itself.
+/// be mutably operating on the L2 driver below the netif, or on the netif itself.
 pub trait NetifAccess {
     /// Waits until the network interface is available and then
     /// calls the provided closure with a reference to the network interface.

@@ -168,22 +168,24 @@ where
         self.subscriptions.notify_changed();
     }
 
-    /// User code hook to get the IP state of the netif passed to the 
+    /// User code hook to get the IP state of the netif passed to the
     /// `run_with_netif` method.
-    /// 
+    ///
     /// Useful when user code needs to bring up/down its own IP services depending on
     /// when the netif controlled by Matter goes up, down or changes its IP configuration.
     pub async fn get_ip(&self) -> Option<IpInfo> {
         self.ip_info.wait(|ip_info| Some(ip_info.clone())).await
     }
 
-    /// User code hook to detect changes to the IP state of the netif passed to the 
+    /// User code hook to detect changes to the IP state of the netif passed to the
     /// `run_with_netif` method.
-    /// 
+    ///
     /// Useful when user code needs to bring up/down its own IP services depending on
     /// when the netif controlled by Matter goes up, down or changes its IP configuration.
     pub async fn wait_ip_changed(&self, prev_ip_info: Option<&IpInfo>) -> Option<IpInfo> {
-        self.ip_info.wait(|ip_info| (ip_info.as_ref() != prev_ip_info).then(|| ip_info.clone())).await
+        self.ip_info
+            .wait(|ip_info| (ip_info.as_ref() != prev_ip_info).then(|| ip_info.clone()))
+            .await
     }
 
     /// This method is a specialization of `run_with_transport` over the UDP transport (both IPv4 and IPv6).

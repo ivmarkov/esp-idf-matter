@@ -1,5 +1,6 @@
 #![cfg(all(esp_idf_comp_esp_netif_enabled, esp_idf_comp_esp_event_enabled))]
 
+use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
@@ -117,10 +118,41 @@ where
     }
 }
 
-/// Get the IP addresses and the interface index of the network interface.
+/// The current configuration of a network interface (if the netif is configured and up)
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NetifInfo {
+    /// Ipv4 address
+    pub ipv4: Ipv4Addr,
+    // Ipv6 address
+    pub ipv6: Ipv6Addr,
+    // Interface index
+    pub interface: u32,
+    // MAC address
+    pub mac: [u8; 6],
+}
+
+impl fmt::Display for NetifInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "IPv4: {}, IPv6: {}, Interface: {}, MAC: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            self.ipv4,
+            self.ipv6,
+            self.interface,
+            self.mac[0],
+            self.mac[1],
+            self.mac[2],
+            self.mac[3],
+            self.mac[4],
+            self.mac[5]
+        )
+    }
+}
+
+/// Get the MAC, IP addresses and the interface index of the network interface.
 ///
 /// Return an error when some of the IP addresses are unspecified.
-pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
+pub fn get_info(netif: &EspNetif) -> Result<NetifInfo, Error> {
     let ip_info = netif.get_ip_info()?;
 
     let ipv4: Ipv4Addr = ip_info.ip.octets().into();
@@ -154,7 +186,14 @@ pub fn get_ips(netif: &EspNetif) -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
 
     let interface = netif.get_index();
 
-    Ok((ipv4, ipv6, interface))
+    let mac = netif.get_mac()?;
+
+    Ok(NetifInfo {
+        ipv4,
+        ipv6,
+        interface,
+        mac,
+    })
 }
 
 /// Implementation of `NetifAccess` for the `EspEth` and `AsyncEth` drivers.

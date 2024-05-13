@@ -1,6 +1,7 @@
 use core::borrow::Borrow;
 use core::cell::RefCell;
-use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
+use core::fmt::Write as _;
+use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
 use core::time::Duration;
 
@@ -48,7 +49,7 @@ use rs_matter::{handler_chain_type, CommissioningData, Matter, MATTER_PORT};
 
 use crate::error::Error;
 use crate::multicast::{join_multicast_v4, join_multicast_v6};
-use crate::netif::{get_ips, NetifAccess};
+use crate::netif::{get_info, NetifAccess, NetifInfo};
 use crate::nvs;
 
 pub use eth::*;
@@ -92,15 +93,6 @@ impl MdnsType {
     }
 }
 
-/// A structure for user code that needs to be aware when the IP network is up
-/// and what are its settings
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IpInfo {
-    pub ipv4: Ipv4Addr,
-    pub ipv6: Ipv6Addr,
-    pub interface: u32,
-}
-
 /// The `MatterStack` struct is the main entry point for the Matter stack.
 ///
 /// It wraps the actual `rs-matter` Matter instance and provides a simplified API for running the stack.
@@ -116,7 +108,7 @@ where
     network: N,
     #[allow(unused)]
     mdns: MdnsType,
-    ip_info: Signal<NoopRawMutex, Option<IpInfo>>,
+    netif_info: Signal<NoopRawMutex, Option<NetifInfo>>,
 }
 
 impl<'a, N> MatterStack<'a, N>
@@ -141,7 +133,7 @@ where
             subscriptions: Subscriptions::new(),
             network: N::INIT,
             mdns,
-            ip_info: Signal::new(None),
+            netif_info: Signal::new(None),
         }
     }
 
@@ -168,13 +160,15 @@ where
         self.subscriptions.notify_changed();
     }
 
-    /// User code hook to get the IP state of the netif passed to the
+    /// User code hook to get the state of the netif passed to the
     /// `run_with_netif` method.
     ///
     /// Useful when user code needs to bring up/down its own IP services depending on
     /// when the netif controlled by Matter goes up, down or changes its IP configuration.
-    pub async fn get_ip(&self) -> Option<IpInfo> {
-        self.ip_info.wait(|ip_info| Some(ip_info.clone())).await
+    pub async fn get_netif_info(&self) -> Option<NetifInfo> {
+        self.netif_info
+            .wait(|netif_info| Some(netif_info.clone()))
+            .await
     }
 
     /// User code hook to detect changes to the IP state of the netif passed to the
@@ -182,9 +176,12 @@ where
     ///
     /// Useful when user code needs to bring up/down its own IP services depending on
     /// when the netif controlled by Matter goes up, down or changes its IP configuration.
-    pub async fn wait_ip_changed(&self, prev_ip_info: Option<&IpInfo>) -> Option<IpInfo> {
-        self.ip_info
-            .wait(|ip_info| (ip_info.as_ref() != prev_ip_info).then(|| ip_info.clone()))
+    pub async fn wait_netif_changed(
+        &self,
+        prev_netif_info: Option<&NetifInfo>,
+    ) -> Option<NetifInfo> {
+        self.netif_info
+            .wait(|netif_info| (netif_info.as_ref() != prev_netif_info).then(|| netif_info.clone()))
             .await
     }
 
@@ -209,10 +206,10 @@ where
         loop {
             info!("Waiting for the network to come up...");
 
-            let reset_ip_info = || {
-                self.ip_info.modify(|ip_info| {
-                    if ip_info.is_some() {
-                        *ip_info = None;
+            let reset_netif_info = || {
+                self.netif_info.modify(|global_netif_info| {
+                    if global_netif_info.is_some() {
+                        *global_netif_info = None;
                         (true, ())
                     } else {
                         (false, ())
@@ -220,28 +217,24 @@ where
                 });
             };
 
-            let _guard = scopeguard::guard((), |_| reset_ip_info());
+            let _guard = scopeguard::guard((), |_| reset_netif_info());
 
-            reset_ip_info();
+            reset_netif_info();
 
-            let (ipv4, ipv6, interface) = netif
-                .wait(sysloop.clone(), |netif| Ok(get_ips(netif).ok()))
+            let netif_info = netif
+                .wait(sysloop.clone(), |netif| Ok(get_info(netif).ok()))
                 .await?;
 
-            info!("Got network with IPs: IPv4={ipv4}, IPv6={ipv6}, if={interface}");
+            info!("Got IP network: {netif_info}");
 
-            self.ip_info.modify(|ip_info| {
-                *ip_info = Some(IpInfo {
-                    ipv4,
-                    ipv6,
-                    interface,
-                });
+            self.netif_info.modify(|global_netif_info| {
+                *global_netif_info = Some(netif_info.clone());
 
                 (true, ())
             });
 
             let socket = async_io::Async::<std::net::UdpSocket>::bind(SocketAddr::V6(
-                SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, interface),
+                SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, netif_info.interface),
             ))?;
 
             let mut main = pin!(self.run_with_transport(
@@ -251,12 +244,12 @@ where
                 dev_comm.clone(),
                 &handler
             ));
-            let mut mdns = pin!(self.run_builtin_mdns(ipv4, ipv6, interface));
+            let mut mdns = pin!(self.run_builtin_mdns(&netif_info));
             let mut down = pin!(netif.wait(sysloop.clone(), |netif| {
-                let prev = Some((ipv4, ipv6, interface));
-                let next = get_ips(netif).ok();
+                let next = get_info(netif).ok();
+                let next = next.as_ref();
 
-                Ok((prev != next).then_some(()))
+                Ok((Some(&netif_info) != next).then_some(()))
             }));
 
             select3(&mut main, &mut mdns, &mut down).coalesce().await?;
@@ -355,22 +348,30 @@ where
         Ok(())
     }
 
-    async fn run_builtin_mdns(
-        &self,
-        ipv4: Ipv4Addr,
-        ipv6: Ipv6Addr,
-        interface: u32,
-    ) -> Result<(), Error> {
+    async fn run_builtin_mdns(&self, netif_info: &NetifInfo) -> Result<(), Error> {
         use rs_matter::mdns::{
             Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
         };
 
         let socket = async_io::Async::<std::net::UdpSocket>::bind(SocketAddr::V6(
-            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, interface),
+            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, netif_info.interface),
         ))?;
 
-        join_multicast_v4(&socket, MDNS_IPV4_BROADCAST_ADDR, ipv4)?;
-        join_multicast_v6(&socket, MDNS_IPV6_BROADCAST_ADDR, interface)?;
+        join_multicast_v4(&socket, MDNS_IPV4_BROADCAST_ADDR, netif_info.ipv4)?;
+        join_multicast_v6(&socket, MDNS_IPV6_BROADCAST_ADDR, netif_info.interface)?;
+
+        let mut hostname = heapless::String::<12>::new();
+        write!(
+            hostname,
+            "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+            netif_info.mac[0],
+            netif_info.mac[1],
+            netif_info.mac[2],
+            netif_info.mac[3],
+            netif_info.mac[4],
+            netif_info.mac[5]
+        )
+        .unwrap();
 
         self.matter()
             .run_builtin_mdns(
@@ -378,11 +379,11 @@ where
                 &socket,
                 &Host {
                     id: 0,
-                    hostname: self.matter().dev_det().device_name,
-                    ip: ipv4.octets(),
-                    ipv6: Some(ipv6.octets()),
+                    hostname: &hostname,
+                    ip: netif_info.ipv4.octets(),
+                    ipv6: Some(netif_info.ipv6.octets()),
                 },
-                Some(interface),
+                Some(netif_info.interface),
             )
             .await?;
 

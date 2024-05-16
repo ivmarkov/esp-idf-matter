@@ -18,6 +18,7 @@ extern crate alloc;
 pub use error::*;
 #[cfg(all(
     feature = "std",
+    any(feature = "async-io", feature = "async-io-mini"),
     esp_idf_comp_nvs_flash_enabled,
     esp_idf_comp_esp_netif_enabled,
     esp_idf_comp_esp_event_enabled
@@ -32,9 +33,11 @@ pub mod netif;
 pub mod nvs;
 #[cfg(all(
     feature = "std",
+    any(feature = "async-io", feature = "async-io-mini"),
     esp_idf_comp_nvs_flash_enabled,
     esp_idf_comp_esp_netif_enabled,
     esp_idf_comp_esp_event_enabled
 ))]
 mod stack;
+mod udp;
 pub mod wifi;

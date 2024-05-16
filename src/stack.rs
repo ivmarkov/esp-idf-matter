@@ -3,7 +3,9 @@ use core::cell::RefCell;
 use core::fmt::Write as _;
 use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
-use core::time::Duration;
+
+#[cfg(feature = "async-io-mini")]
+use async_io_mini as async_io;
 
 use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
@@ -51,6 +53,7 @@ use crate::error::Error;
 use crate::multicast::{join_multicast_v4, join_multicast_v6};
 use crate::netif::{get_info, NetifAccess, NetifInfo};
 use crate::nvs;
+use crate::udp;
 
 pub use eth::*;
 #[cfg(all(
@@ -238,8 +241,8 @@ where
             ))?;
 
             let mut main = pin!(self.run_with_transport(
-                &socket,
-                &socket,
+                udp::Udp(&socket),
+                udp::Udp(&socket),
                 nvs.clone(),
                 dev_comm.clone(),
                 &handler
@@ -375,8 +378,8 @@ where
 
         self.matter()
             .run_builtin_mdns(
-                &socket,
-                &socket,
+                udp::Udp(&socket),
+                udp::Udp(&socket),
                 &Host {
                     id: 0,
                     hostname: &hostname,
@@ -537,15 +540,23 @@ pub fn init_async_io() -> Result<(), Error> {
 
     block_on(init_async_io_async());
 
-    info!("Async IO initialized");
-
     Ok(())
 }
 
 #[inline(never)]
 #[cold]
 async fn init_async_io_async() {
-    // Force the `async-io` lazy initialization to trigger earlier rather than later,
-    // as it consumes a lot of temp stack memory
-    async_io::Timer::after(Duration::from_millis(100)).await;
+    #[cfg(not(feature = "async-io-mini"))]
+    {
+        // Force the `async-io` lazy initialization to trigger earlier rather than later,
+        // as it consumes a lot of temp stack memory
+        async_io::Timer::after(core::time::Duration::from_millis(100)).await;
+        info!("Async IO initialized; using `async-io`");
+    }
+
+    #[cfg(feature = "async-io-mini")]
+    {
+        // Nothing to initialize for `async-io-mini`
+        info!("Async IO initialized; using `async-io-mini`");
+    }
 }

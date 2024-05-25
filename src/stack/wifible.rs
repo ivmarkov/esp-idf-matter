@@ -29,16 +29,14 @@ use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
 
 use log::info;
 
-use rs_matter::data_model::cluster_basic_information;
-use rs_matter::data_model::objects::{
-    AsyncHandler, AsyncMetadata, Cluster, Endpoint, HandlerCompat,
-};
+use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
+use rs_matter::data_model::root_endpoint;
+use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
 use rs_matter::data_model::sdm::failsafe::FailSafe;
-use rs_matter::data_model::sdm::{
-    admin_commissioning, general_commissioning, general_diagnostics, group_key_management, noc,
-    nw_commissioning,
+use rs_matter::data_model::sdm::wifi_nw_diagnostics;
+use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
+    WiFiSecurity, WiFiVersion, WifiNwDiagCluster, WifiNwDiagData,
 };
-use rs_matter::data_model::system_model::{access_control, descriptor};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::utils::select::Coalesce;
@@ -47,8 +45,8 @@ use rs_matter::CommissioningData;
 use crate::ble::{BtpGattContext, BtpGattPeripheral};
 use crate::error::Error;
 use crate::wifi::mgmt::WifiManager;
-use crate::wifi::{comm, diag, WifiContext};
-use crate::{handler, MatterStack, Network, RootEndpointHandler};
+use crate::wifi::{comm, WifiContext};
+use crate::{MatterStack, Network};
 
 const MAX_WIFI_NETWORKS: usize = 2;
 const GATTS_APP_ID: u16 = 0;
@@ -87,21 +85,28 @@ impl<'a> MatterStack<'a, WifiBle> {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
     pub const fn root_metadata() -> Endpoint<'static> {
-        Endpoint {
-            id: 0,
-            device_type: rs_matter::data_model::device_types::DEV_TYPE_ROOT_NODE,
-            clusters: &CLUSTERS,
-        }
+        root_endpoint::endpoint(0, OperNwType::Wifi)
     }
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
     pub fn root_handler(&self) -> WifiBleRootEndpointHandler<'_> {
         handler(
+            0,
             self.matter(),
             comm::WifiNwCommCluster::new(*self.matter().borrow(), &self.network.wifi_context),
-            diag::ID,
-            HandlerCompat(diag::WifiNwDiagCluster::new(*self.matter().borrow())),
+            wifi_nw_diagnostics::ID,
+            HandlerCompat(WifiNwDiagCluster::new(
+                *self.matter().borrow(),
+                // TODO: Update with actual information
+                WifiNwDiagData {
+                    bssid: [0; 6],
+                    security_type: WiFiSecurity::Unspecified,
+                    wifi_version: WiFiVersion::B,
+                    channel_number: 20,
+                    rssi: 0,
+                },
+            )),
         )
     }
 
@@ -262,18 +267,5 @@ impl<'a> MatterStack<'a, WifiBle> {
 pub type WifiBleRootEndpointHandler<'a> = RootEndpointHandler<
     'a,
     comm::WifiNwCommCluster<'a, MAX_WIFI_NETWORKS, NoopRawMutex>,
-    HandlerCompat<diag::WifiNwDiagCluster>,
+    HandlerCompat<WifiNwDiagCluster>,
 >;
-
-const CLUSTERS: [Cluster<'static>; 10] = [
-    descriptor::CLUSTER,
-    cluster_basic_information::CLUSTER,
-    general_commissioning::CLUSTER,
-    nw_commissioning::WIFI_CLUSTER,
-    admin_commissioning::CLUSTER,
-    noc::CLUSTER,
-    access_control::CLUSTER,
-    general_diagnostics::CLUSTER,
-    diag::CLUSTER,
-    group_key_management::CLUSTER,
-];

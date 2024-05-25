@@ -12,7 +12,6 @@ use rs_matter::utils::notification::Notification;
 use rs_matter::utils::writebuf::WriteBuf;
 
 pub mod comm;
-pub mod diag;
 pub mod mgmt;
 
 #[derive(Debug, Clone, ToTLV, FromTLV)]

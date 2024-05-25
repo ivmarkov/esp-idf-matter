@@ -1,5 +1,3 @@
-use core::borrow::Borrow;
-use core::cell::RefCell;
 use core::fmt::Write as _;
 use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
@@ -16,38 +14,19 @@ use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsPartitionId};
 
 use log::info;
 
-use rs_matter::acl::AclMgr;
-use rs_matter::data_model::cluster_basic_information::{self, BasicInfoCluster, BasicInfoConfig};
+use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::core::IMBuffer;
-use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, EmptyHandler, HandlerCompat};
-use rs_matter::data_model::sdm::admin_commissioning::AdminCommCluster;
+use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata};
 use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
-use rs_matter::data_model::sdm::failsafe::FailSafe;
-use rs_matter::data_model::sdm::general_commissioning::GenCommCluster;
-use rs_matter::data_model::sdm::general_diagnostics::GenDiagCluster;
-use rs_matter::data_model::sdm::group_key_management::GrpKeyMgmtCluster;
-use rs_matter::data_model::sdm::noc::NocCluster;
-use rs_matter::data_model::sdm::{
-    admin_commissioning, general_commissioning, general_diagnostics, group_key_management, noc,
-    nw_commissioning,
-};
 use rs_matter::data_model::subscriptions::Subscriptions;
-use rs_matter::data_model::system_model::access_control::AccessControlCluster;
-use rs_matter::data_model::system_model::descriptor::DescriptorCluster;
-use rs_matter::data_model::system_model::{access_control, descriptor};
 use rs_matter::error::ErrorCode;
-use rs_matter::fabric::FabricMgr;
-use rs_matter::mdns::Mdns;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::secure_channel::pake::PaseMgr;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
 use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
-use rs_matter::utils::epoch::Epoch;
-use rs_matter::utils::rand::Rand;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::signal::Signal;
-use rs_matter::{handler_chain_type, CommissioningData, Matter, MATTER_PORT};
+use rs_matter::{CommissioningData, Matter, MATTER_PORT};
 
 use crate::error::Error;
 use crate::multicast::{join_multicast_v4, join_multicast_v6};
@@ -407,123 +386,6 @@ where
 
         Ok(())
     }
-}
-
-/// A type representing the type of the root (Endpoint 0) handler
-/// which is generic over the operational transport clusters (i.e. Ethernet, Wifi or Thread)
-pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
-    NWCOMM,
-    NWDIAG,
-    HandlerCompat<descriptor::DescriptorCluster<'a>>,
-    HandlerCompat<cluster_basic_information::BasicInfoCluster<'a>>,
-    HandlerCompat<general_commissioning::GenCommCluster<'a>>,
-    HandlerCompat<admin_commissioning::AdminCommCluster<'a>>,
-    HandlerCompat<noc::NocCluster<'a>>,
-    HandlerCompat<access_control::AccessControlCluster<'a>>,
-    HandlerCompat<general_diagnostics::GenDiagCluster>,
-    HandlerCompat<group_key_management::GrpKeyMgmtCluster>
-);
-
-/// A utility function to instantiate the root (Endpoint 0) handler.
-/// Besides a reference to the main `Matter` object, this function
-/// needs user-supplied implementations of the network commissioning
-/// and network diagnostics clusters.
-pub fn handler<'a, NWCOMM, NWDIAG, T>(
-    matter: &'a T,
-    nwcomm: NWCOMM,
-    nwdiag_id: u32,
-    nwdiag: NWDIAG,
-) -> RootEndpointHandler<'a, NWCOMM, NWDIAG>
-where
-    T: Borrow<BasicInfoConfig<'a>>
-        + Borrow<dyn DevAttDataFetcher + 'a>
-        + Borrow<RefCell<PaseMgr>>
-        + Borrow<RefCell<FabricMgr>>
-        + Borrow<RefCell<AclMgr>>
-        + Borrow<RefCell<FailSafe>>
-        + Borrow<dyn Mdns + 'a>
-        + Borrow<Epoch>
-        + Borrow<Rand>
-        + 'a,
-{
-    wrap(
-        0,
-        matter.borrow(),
-        matter.borrow(),
-        matter.borrow(),
-        matter.borrow(),
-        matter.borrow(),
-        matter.borrow(),
-        matter.borrow(),
-        *matter.borrow(),
-        *matter.borrow(),
-        nwcomm,
-        nwdiag_id,
-        nwdiag,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn wrap<'a, NWCOMM, NWDIAG>(
-    endpoint_id: u16,
-    basic_info: &'a BasicInfoConfig<'a>,
-    dev_att: &'a dyn DevAttDataFetcher,
-    pase: &'a RefCell<PaseMgr>,
-    fabric: &'a RefCell<FabricMgr>,
-    acl: &'a RefCell<AclMgr>,
-    failsafe: &'a RefCell<FailSafe>,
-    mdns: &'a dyn Mdns,
-    epoch: Epoch,
-    rand: Rand,
-    nwcomm: NWCOMM,
-    nwdiag_id: u32,
-    nwdiag: NWDIAG,
-) -> RootEndpointHandler<'a, NWCOMM, NWDIAG> {
-    EmptyHandler
-        .chain(
-            endpoint_id,
-            group_key_management::ID,
-            HandlerCompat(GrpKeyMgmtCluster::new(rand)),
-        )
-        .chain(
-            endpoint_id,
-            general_diagnostics::ID,
-            HandlerCompat(GenDiagCluster::new(rand)),
-        )
-        .chain(
-            endpoint_id,
-            access_control::ID,
-            HandlerCompat(AccessControlCluster::new(acl, rand)),
-        )
-        .chain(
-            endpoint_id,
-            noc::ID,
-            HandlerCompat(NocCluster::new(
-                dev_att, fabric, acl, failsafe, mdns, epoch, rand,
-            )),
-        )
-        .chain(
-            endpoint_id,
-            admin_commissioning::ID,
-            HandlerCompat(AdminCommCluster::new(pase, mdns, rand)),
-        )
-        .chain(
-            endpoint_id,
-            general_commissioning::ID,
-            HandlerCompat(GenCommCluster::new(failsafe, false, rand)),
-        )
-        .chain(
-            endpoint_id,
-            cluster_basic_information::ID,
-            HandlerCompat(BasicInfoCluster::new(basic_info, rand)),
-        )
-        .chain(
-            endpoint_id,
-            descriptor::ID,
-            HandlerCompat(DescriptorCluster::new(rand)),
-        )
-        .chain(endpoint_id, nwdiag_id, nwdiag)
-        .chain(endpoint_id, nw_commissioning::ID, nwcomm)
 }
 
 /// A utility function to initialize the `async-io` Reactor which is

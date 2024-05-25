@@ -5,23 +5,18 @@ use esp_idf_svc::nvs::{EspNvsPartition, NvsPartitionId};
 
 use log::info;
 
-use rs_matter::data_model::cluster_basic_information;
-use rs_matter::data_model::objects::{
-    AsyncHandler, AsyncMetadata, Cluster, Endpoint, HandlerCompat,
-};
+use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
+use rs_matter::data_model::root_endpoint;
+use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
 use rs_matter::data_model::sdm::ethernet_nw_diagnostics::EthNwDiagCluster;
 use rs_matter::data_model::sdm::nw_commissioning::EthNwCommCluster;
-use rs_matter::data_model::sdm::{
-    admin_commissioning, ethernet_nw_diagnostics, general_commissioning, general_diagnostics,
-    group_key_management, noc, nw_commissioning,
-};
-use rs_matter::data_model::system_model::{access_control, descriptor};
+use rs_matter::data_model::sdm::{ethernet_nw_diagnostics, nw_commissioning};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::CommissioningData;
 
 use crate::error::Error;
 use crate::netif::NetifAccess;
-use crate::{handler, MatterStack, Network, RootEndpointHandler};
+use crate::{MatterStack, Network};
 
 /// An implementation of the `Network` trait for Ethernet.
 ///
@@ -46,17 +41,14 @@ impl<'a> MatterStack<'a, Eth> {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
     /// configured for Ethernet network.
     pub const fn root_metadata() -> Endpoint<'static> {
-        Endpoint {
-            id: 0,
-            device_type: rs_matter::data_model::device_types::DEV_TYPE_ROOT_NODE,
-            clusters: &CLUSTERS,
-        }
+        root_endpoint::endpoint(0, OperNwType::Ethernet)
     }
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
     /// configured for Ethernet network.
     pub fn root_handler(&self) -> EthRootEndpointHandler<'_> {
         handler(
+            0,
             self.matter(),
             HandlerCompat(EthNwCommCluster::new(*self.matter().borrow())),
             ethernet_nw_diagnostics::ID,
@@ -106,16 +98,3 @@ pub type EthRootEndpointHandler<'a> = RootEndpointHandler<
     HandlerCompat<nw_commissioning::EthNwCommCluster>,
     HandlerCompat<ethernet_nw_diagnostics::EthNwDiagCluster>,
 >;
-
-const CLUSTERS: [Cluster<'static>; 10] = [
-    descriptor::CLUSTER,
-    cluster_basic_information::CLUSTER,
-    general_commissioning::CLUSTER,
-    nw_commissioning::ETH_CLUSTER,
-    admin_commissioning::CLUSTER,
-    noc::CLUSTER,
-    access_control::CLUSTER,
-    general_diagnostics::CLUSTER,
-    ethernet_nw_diagnostics::CLUSTER,
-    group_key_management::CLUSTER,
-];

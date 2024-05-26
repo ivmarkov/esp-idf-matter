@@ -15,29 +15,10 @@ extern crate std;
 #[macro_use]
 extern crate alloc;
 
-pub use error::*;
-#[cfg(all(
-    feature = "std",
-    any(feature = "async-io", feature = "async-io-mini"),
-    esp_idf_comp_nvs_flash_enabled,
-    esp_idf_comp_esp_netif_enabled,
-    esp_idf_comp_esp_event_enabled
-))]
+#[cfg(feature = "rs-matter-stack")]
 pub use stack::*;
 
 pub mod ble;
-mod error;
 pub mod mdns;
 pub mod multicast;
-pub mod netif;
-pub mod nvs;
-#[cfg(all(
-    feature = "std",
-    any(feature = "async-io", feature = "async-io-mini"),
-    esp_idf_comp_nvs_flash_enabled,
-    esp_idf_comp_esp_netif_enabled,
-    esp_idf_comp_esp_event_enabled
-))]
 mod stack;
-mod udp;
-pub mod wifi;

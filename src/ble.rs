@@ -22,7 +22,7 @@ use esp_idf_svc::bt::ble::gatt::{
 };
 use esp_idf_svc::bt::{BdAddr, BleEnabled, BtDriver, BtStatus, BtUuid};
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
-use esp_idf_svc::sys::{EspError, ESP_FAIL};
+use esp_idf_svc::sys::{EspError, ESP_ERR_INVALID_STATE, ESP_FAIL};
 
 use log::{debug, info, warn};
 
@@ -34,8 +34,6 @@ use rs_matter::transport::network::btp::{
 use rs_matter::transport::network::BtAddr;
 use rs_matter::utils::ifmutex::IfMutex;
 use rs_matter::utils::signal::Signal;
-
-use crate::error::Error;
 
 const MAX_CONNECTIONS: usize = MAX_BTP_SESSIONS;
 const MAX_MTU_SIZE: usize = 512;
@@ -94,7 +92,7 @@ impl BtpGattContext {
         }
     }
 
-    pub(crate) fn reset(&self) -> Result<(), Error> {
+    pub(crate) fn reset(&self) -> Result<(), EspError> {
         self.state.lock(|state| {
             let mut state = state.borrow_mut();
 
@@ -110,9 +108,12 @@ impl BtpGattContext {
             (false, ())
         });
 
-        self.ind.try_lock().map(|mut ind| {
-            ind.data.clear();
-        })?;
+        self.ind
+            .try_lock()
+            .map(|mut ind| {
+                ind.data.clear();
+            })
+            .map_err(|_| EspError::from_infallible::<{ ESP_ERR_INVALID_STATE }>())?;
 
         Ok(())
     }
@@ -131,7 +132,7 @@ where
     M: BleEnabled,
 {
     app_id: u16,
-    driver: &'a BtDriver<'d, M>,
+    driver: BtDriver<'d, M>,
     context: &'a BtpGattContext,
 }
 
@@ -145,9 +146,9 @@ where
     /// that there are no other GATT peripherals running before calling this function.
     pub fn new(
         app_id: u16,
-        driver: &'a BtDriver<'d, M>,
+        driver: BtDriver<'d, M>,
         context: &'a BtpGattContext,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, EspError> {
         context.reset()?;
 
         Ok(Self {
@@ -163,14 +164,14 @@ where
         service_name: &str,
         service_adv_data: &AdvData,
         mut callback: F,
-    ) -> Result<(), Error>
+    ) -> Result<(), EspError>
     where
         F: FnMut(GattPeripheralEvent) + Send + 'd,
     {
         let _pin = service_adv_data.pin();
 
-        let gap = EspBleGap::new(self.driver)?;
-        let gatts = EspGatts::new(self.driver)?;
+        let gap = EspBleGap::new(&self.driver)?;
+        let gatts = EspGatts::new(&self.driver)?;
 
         info!("BLE Gap and Gatts initialized");
 
@@ -235,7 +236,7 @@ where
     }
 
     /// Indicate new data on characteristic `C2` to a remote peer.
-    pub async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), Error> {
+    pub async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), EspError> {
         self.context
             .ind
             .with(|ind| {

@@ -1,4 +1,4 @@
-//! An example utilizing the `EthMatterStack` struct.
+//! An example utilizing the `EspEthMatterStack` struct.
 //! As the name suggests, this Matter stack assembly uses Ethernet as the main transport, as well as for commissioning.
 //!
 //! Notice thart we actually don't use Ethernet for real, as ESP32s don't have Ethernet ports out of the box.
@@ -13,7 +13,9 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, Error, EthMatterStack, MdnsType};
+use esp_idf_matter::{
+    init_async_io, EspEthMatterStack, EspKvBlobStore, EspMatterNetif, EspPersist,
+};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -44,7 +46,7 @@ mod dev_att;
 const WIFI_SSID: &str = env!("WIFI_SSID");
 const WIFI_PASS: &str = env!("WIFI_PASS");
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), anyhow::Error> {
     EspLogger::initialize_default();
 
     info!("Starting...");
@@ -67,7 +69,7 @@ fn main() -> Result<(), Error> {
 
 #[inline(never)]
 #[cold]
-fn run() -> Result<(), Error> {
+fn run() -> Result<(), anyhow::Error> {
     let result = block_on(matter());
 
     if let Err(e) = &result {
@@ -80,17 +82,19 @@ fn run() -> Result<(), Error> {
     result
 }
 
-async fn matter() -> Result<(), Error> {
+async fn matter() -> Result<(), anyhow::Error> {
+    // Take the Matter stack (can be done only once),
+    // as we'll run it in this thread
+    let stack = MATTER_STACK.take();
+
+    // Take some generic ESP-IDF stuff we'll need later
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
+    let peripherals = Peripherals::take()?;
 
     // Configure and start the Wifi first
     let mut wifi = Box::new(AsyncWifi::wrap(
-        EspWifi::new(
-            Peripherals::take()?.modem,
-            sysloop.clone(),
-            Some(nvs.clone()),
-        )?,
+        EspWifi::new(peripherals.modem, sysloop.clone(), Some(nvs.clone()))?,
         sysloop.clone(),
         EspTaskTimerService::new()?,
     )?);
@@ -104,10 +108,6 @@ async fn matter() -> Result<(), Error> {
 
     // Matter needs an IPv6 address to work
     esp!(unsafe { esp_netif_create_ip6_linklocal(wifi.wifi().sta_netif().handle() as _) })?;
-
-    // Take the Matter stack (can be done only once),
-    // as we'll run it in this thread
-    let stack = MATTER_STACK.take();
 
     // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
@@ -135,15 +135,14 @@ async fn matter() -> Result<(), Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
-        // The Matter stack needs (a clone of) the system event loop
-        sysloop,
-        // The Matter stack needs (a clone of) the default ESP IDF NVS partition
-        nvs,
-        // For the Ethernet case, the Matter stack needs access to the network
-        // interface (i.e. something that implements the `NetifAccess` trait)
-        // so that it can track when the interface goes up/down. `EspNetif` obviously
-        // does implement this trait
-        wifi.wifi().sta_netif(),
+        // The Matter stack needs a persister to store its state
+        // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
+        // under namespace `esp-idf-matter`
+        EspPersist::new_eth(EspKvBlobStore::new_default(nvs.clone())?, stack),
+        // The Matter stack need access to the netif on which we'll operate
+        // Since we are pretending to use a wired Ethernet connection - yet -
+        // we are using a Wifi STA, provide the Wifi netif here
+        EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
         // Hard-coded for demo purposes
         CommissioningData {
             verifier: VerifierData::new_with_pw(123456, *stack.matter().borrow()),
@@ -175,26 +174,28 @@ async fn matter() -> Result<(), Error> {
     });
 
     // Schedule the Matter run & the device loop together
-    select(&mut matter, &mut device).coalesce().await
+    select(&mut matter, &mut device).coalesce().await?;
+
+    Ok(())
 }
 
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
-static MATTER_STACK: ConstStaticCell<EthMatterStack> = ConstStaticCell::new(EthMatterStack::new(
-    &BasicInfoConfig {
-        vid: 0xFFF1,
-        pid: 0x8000,
-        hw_ver: 2,
-        sw_ver: 1,
-        sw_ver_str: "1",
-        serial_no: "aabbccdd",
-        device_name: "MyLight",
-        product_name: "ACME Light",
-        vendor_name: "ACME",
-    },
-    &dev_att::HardCodedDevAtt::new(),
-    MdnsType::default(),
-));
+static MATTER_STACK: ConstStaticCell<EspEthMatterStack<()>> =
+    ConstStaticCell::new(EspEthMatterStack::new_default(
+        &BasicInfoConfig {
+            vid: 0xFFF1,
+            pid: 0x8000,
+            hw_ver: 2,
+            sw_ver: 1,
+            sw_ver_str: "1",
+            serial_no: "aabbccdd",
+            device_name: "MyLight",
+            product_name: "ACME Light",
+            vendor_name: "ACME",
+        },
+        &dev_att::HardCodedDevAtt::new(),
+    ));
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1
@@ -204,7 +205,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EthMatterStack::root_metadata(),
+        EspEthMatterStack::<()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_type: DEV_TYPE_ON_OFF_LIGHT,

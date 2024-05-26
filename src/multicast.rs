@@ -2,21 +2,19 @@
 
 use core::net::{Ipv4Addr, Ipv6Addr};
 
-use std::net::UdpSocket;
+use std::{io, net::UdpSocket};
 
 #[cfg(feature = "async-io-mini")]
 use async_io_mini as async_io;
 
 use log::info;
 
-use rs_matter::error::{Error, ErrorCode};
-
 /// Join an IPV6 multicast group on a specific interface
 pub fn join_multicast_v6(
     socket: &async_io::Async<UdpSocket>,
     multiaddr: Ipv6Addr,
     interface: u32,
-) -> Result<(), Error> {
+) -> Result<(), io::Error> {
     #[cfg(not(target_os = "espidf"))]
     socket.as_ref().join_multicast_v6(&multiaddr, interface)?;
 
@@ -51,7 +49,7 @@ pub fn join_multicast_v4(
     socket: &async_io::Async<UdpSocket>,
     multiaddr: Ipv4Addr,
     interface: Ipv4Addr,
-) -> Result<(), Error> {
+) -> Result<(), io::Error> {
     #[cfg(not(target_os = "espidf"))]
     self.socket
         .as_ref()
@@ -92,7 +90,7 @@ fn esp_setsockopt<T>(
     proto: u32,
     option: u32,
     value: T,
-) -> Result<(), Error> {
+) -> Result<(), io::Error> {
     use std::os::fd::AsRawFd;
 
     esp_idf_svc::sys::esp!(unsafe {
@@ -104,7 +102,7 @@ fn esp_setsockopt<T>(
             core::mem::size_of::<T>() as _,
         )
     })
-    .map_err(|_| ErrorCode::StdIoError)?;
+    .map_err(|_| io::ErrorKind::Other)?;
 
     Ok(())
 }

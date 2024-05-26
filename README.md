@@ -8,21 +8,19 @@
 
 ## Overview
 
-Configuring and running the [`rs-matter`](https://github.com/project-chip/rs-matter) crate is not trivial.
+Everything necessary to run [`rs-matter`](https://github.com/project-chip/rs-matter) on the ESP-IDF:
+* Bluedroid implementation of `rs-matter`'s `GattPeripheral` for BLE comissioning support.
+* [`rs-matter-stack`](https://github.com/ivmarkov/rs-matter-stack) support with `Netif`, `KvBlobStore` and `Modem` implementations.
 
-Users are expected to provide implementations for various `rs-matter` abstractions, like a UDP stack, BLE stack, randomizer, epoch time, responder and so on and so forth. 
+Since ESP-IDF does support the Rust Standard Library, UDP networking just works.
 
-Furthermore, _operating_ the assembled Matter stack is also challenging, as various features might need to be switched on or off depending on whether Matter is running in commissioning or operating mode, and also depending on the current network connectivity (as in e.g. Wifi signal lost).
-
-**This crate addresses these issues by providing an all-in-one [`MatterStack`](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/stack.rs) assembly that configures `rs-matter` for reliably operating on top of the ESP IDF SDK.**
-
-Instantiate it and then call `MatterStack::run(...)`.
+## Example
 
 ```rust
-//! An example utilizing the `WifiBleMatterStack` struct.
+//! An example utilizing the `EspWifiBleMatterStack` struct.
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
 //! and BLE for commissioning.
-//! If you want to use Ethernet, utilize `EthMatterStack` instead.
+//! If you want to use Ethernet, utilize `EspEthMatterStack` instead.
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 
@@ -32,7 +30,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, Error, MdnsType, WifiBleMatterStack};
+use esp_idf_matter::{init_async_io, EspWifiBleMatterStack, EspKvBlobStore, EspPersist, EspModem};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -57,7 +55,7 @@ use static_cell::ConstStaticCell;
 #[path = "dev_att/dev_att.rs"]
 mod dev_att;
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), anyhow::Error> {
     EspLogger::initialize_default();
 
     info!("Starting...");
@@ -80,7 +78,7 @@ fn main() -> Result<(), Error> {
 
 #[inline(never)]
 #[cold]
-fn run() -> Result<(), Error> {
+fn run() -> Result<(), anyhow::Error> {
     let result = block_on(matter());
 
     if let Err(e) = &result {
@@ -93,10 +91,16 @@ fn run() -> Result<(), Error> {
     result
 }
 
-async fn matter() -> Result<(), Error> {
+async fn matter() -> Result<(), anyhow::Error> {
     // Take the Matter stack (can be done only once),
     // as we'll run it in this thread
     let stack = MATTER_STACK.take();
+
+    // Take some generic ESP-IDF stuff we'll need later
+    let sysloop = EspSystemEventLoop::take()?;
+    let timers = EspTaskTimerService::new()?;
+    let nvs = EspDefaultNvsPartition::take()?;
+    let peripherals = Peripherals::take()?;
 
     // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
@@ -124,17 +128,15 @@ async fn matter() -> Result<(), Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
-        // The Matter stack needs (a clone of) the system event loop
-        EspSystemEventLoop::take()?,
-        // The Matter stack needs (a clone of) the timer service
-        EspTaskTimerService::new()?,
-        // The Matter stack needs (a clone of) the default ESP IDF NVS partition
-        EspDefaultNvsPartition::take()?,
+        // The Matter stack needs a persister to store its state
+        // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
+        // under namespace `esp-idf-matter`
+        EspPersist::new_wifi_ble(EspKvBlobStore::new_default(nvs.clone())?, stack),
         // The Matter stack needs the BT/Wifi modem peripheral - and in general -
         // the Bluetooth / Wifi connections will be managed by the Matter stack itself
         // For finer-grained control, call `MatterStack::is_commissioned`,
         // `MatterStack::commission` and `MatterStack::operate`
-        Peripherals::take()?.modem,
+        EspModem::new(peripherals.modem, sysloop, timers, nvs, stack),
         // Hard-coded for demo purposes
         CommissioningData {
             verifier: VerifierData::new_with_pw(123456, *stack.matter().borrow()),
@@ -166,14 +168,16 @@ async fn matter() -> Result<(), Error> {
     });
 
     // Schedule the Matter run & the device loop together
-    select(&mut matter, &mut device).coalesce().await
+    select(&mut matter, &mut device).coalesce().await?;
+
+    Ok(())
 }
 
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: ConstStaticCell<WifiBleMatterStack> =
-    ConstStaticCell::new(WifiBleMatterStack::new(
+static MATTER_STACK: ConstStaticCell<EspWifiBleMatterStack<()>> =
+    ConstStaticCell::new(EspWifiBleMatterStack::new_default(
         &BasicInfoConfig {
             vid: 0xFFF1,
             pid: 0x8000,
@@ -186,7 +190,6 @@ static MATTER_STACK: ConstStaticCell<WifiBleMatterStack> =
             vendor_name: "ACME",
         },
         &dev_att::HardCodedDevAtt::new(),
-        MdnsType::default(),
     ));
 
 /// Endpoint 0 (the root endpoint) always runs
@@ -197,7 +200,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        WifiBleMatterStack::root_metadata(),
+        EspWifiBleMatterStack::<()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_type: DEV_TYPE_ON_OFF_LIGHT,
@@ -207,41 +210,21 @@ const NODE: Node = Node {
 };
 ```
 
-(See also [Examples](#examples))
+(See also [All examples](#all-examples))
 
-### Advanced use cases
 
-If the provided `MatterStack` does not cut it, users can implement their own stacks because the building blocks are also exposed as a public API.
-
-#### Building blocks
-
-* [Bluetooth commissioning support](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/ble.rs) with the ESP IDF Bluedroid stack (not necessary if you plan to run Matter over Ethernet)
-* WiFi provisioning support via an [ESP IDF specific Matter Network Commissioning Cluster implementation](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/wifi/comm.rs)
-* [Non-volatile storage for Matter persistent data (fabrics, ACLs and network connections)](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/nvs.rs) on top of the ESP IDF NVS flash API
-* mDNS:
-  * Optional [Matter mDNS responder implementation](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/mdns.rs) based on the ESP IDF mDNS responder (use if you need to register other services besides Matter in mDNS)
-  * [UDP-multicast workarounds](https://github.com/ivmarkov/esp-idf-matter/blob/master/src/multicast.rs) for `rs-matter`'s built-in mDNS responder, addressing bugs in the Rust STD wrappers of ESP IDF
-
-#### Future
+## Future
 * Device Attestation data support using secure flash storage
 * Setting system time via Matter
 * Matter OTA support based on the ESP IDF OTA API
 * Thread networking (for ESP32H2 and ESP32C6)
 * Wifi Access-Point based commissioning (for ESP32S2 which does not have Bluetooth support)
 
-#### Additional building blocks provided by `rs-matter` directly and compatible with ESP IDF:
-* UDP and (in future) TCP support
-  * Enable the `async-io` and `std` features on `rs-matter` and use `async-io` sockets. The [`async-io`](https://github.com/smol-rs/async-io) crate has support for ESP IDF out of the box
-* Random number generator
-  * Enable the `std` feature on `rs-matter`. This way, the [`rand`](https://github.com/rust-random/rand) crate will be utilized, which has support for ESP IDF out of the box
-* UNIX epoch
-  * Enable the `std` feature on `rs-matter`. This way, `rs-matter` will utilize `std::time::SystemTime` which is supported by ESP IDF out of the box
-
 ## Build Prerequisites
 
 Follow the [Prerequisites](https://github.com/esp-rs/esp-idf-template#prerequisites) section in the `esp-idf-template` crate.
 
-## Examples
+## All examples
 
 The examples could be built and flashed conveniently with [`cargo-espflash`](https://github.com/esp-rs/espflash/). To run e.g. `light` on an e.g. ESP32-C3:
 (Swap the Rust target and example name with the target corresponding for your ESP32 MCU and with the example you would like to build)

@@ -28,8 +28,9 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripheral::{Peripheral, PeripheralRef};
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
 use esp_idf_svc::hal::{into_ref, modem};
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::sys::EspError;
+use esp_idf_svc::sys::{esp, esp_netif_create_ip6_linklocal, EspError};
 use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_svc::wifi::{AccessPointInfo, AsyncWifi, Capability, Configuration, EspWifi};
 
@@ -211,7 +212,13 @@ impl<'a, 'd> Wifi for EspL2<'a, 'd> {
     }
 
     async fn connect(&mut self) -> Result<(), Self::Error> {
-        self.0.wifi.lock().await.connect().await
+        let mut wifi = self.0.wifi.lock().await;
+
+        wifi.connect().await?;
+
+        esp!(unsafe { esp_netif_create_ip6_linklocal(wifi.wifi().sta_netif().handle() as _) })?;
+
+        Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), Self::Error> {

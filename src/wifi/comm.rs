@@ -237,7 +237,7 @@ where
                         writer.set(NetworkConfigResponse {
                             status: NetworkCommissioningStatus::Success,
                             debug_text: None,
-                            network_index: Some(state.networks.len() as _),
+                            network_index: Some((state.networks.len() - 1) as _),
                         })?;
                     }
                     Err(network) => {

@@ -107,6 +107,7 @@ impl<'a> MatterStack<'a, WifiBle> {
                     rssi: 0,
                 },
             )),
+            false,
         )
     }
 

@@ -48,7 +48,7 @@ pub fn init_async_io() -> Result<(), esp_idf_svc::sys::EspError> {
 #[cold]
 #[cfg(feature = "std")]
 async fn init_async_io_async() {
-    #[cfg(all(feature = "async-io-mini", not(feature = "async-io-mini")))]
+    #[cfg(all(feature = "async-io", not(feature = "async-io-mini")))]
     {
         // Force the `async-io` lazy initialization to trigger earlier rather than later,
         // as it consumes a lot of temp stack memory

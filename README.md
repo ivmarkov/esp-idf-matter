@@ -16,6 +16,8 @@ Since ESP-IDF does support the Rust Standard Library, UDP networking just works.
 
 ## Example
 
+(See also [All examples](#all-examples))
+
 ```rust
 //! An example utilizing the `EspWifiBleMatterStack` struct.
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
@@ -210,10 +212,8 @@ const NODE: Node = Node {
 };
 ```
 
-(See also [All examples](#all-examples))
-
-
 ## Future
+
 * Device Attestation data support using secure flash storage
 * Setting system time via Matter
 * Matter OTA support based on the ESP IDF OTA API

@@ -31,6 +31,8 @@ use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
+use rs_matter_stack::persist::DummyPersist;
+
 use static_cell::ConstStaticCell;
 
 #[path = "dev_att/dev_att.rs"]
@@ -112,7 +114,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`
-        EspPersist::new_wifi_ble(EspKvBlobStore::new_default(nvs.clone())?, stack),
+        DummyPersist,
+        //EspPersist::new_wifi_ble(EspKvBlobStore::new_default(nvs.clone())?, stack),
         // The Matter stack needs the BT/Wifi modem peripheral - and in general -
         // the Bluetooth / Wifi connections will be managed by the Matter stack itself
         // For finer-grained control, call `MatterStack::is_commissioned`,

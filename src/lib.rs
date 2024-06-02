@@ -22,5 +22,4 @@ pub use stack::*;
 
 pub mod ble;
 pub mod mdns;
-pub mod multicast;
 mod stack;

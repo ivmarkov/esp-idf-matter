@@ -38,10 +38,12 @@ debug = true
 opt-level = "z"
 
 [features]
+#default = ["rs-matter-stack"]
 default = ["rs-matter-stack", "async-io-mini"]
 rs-matter-stack = ["dep:rs-matter-stack", "std"]
+async-io-mini = ["std", "dep:async-io-mini", "edge-nal-std/async-io-mini"]
 std = ["esp-idf-svc/std"]
-examples = ["rs-matter-stack", "async-io-mini", "esp-idf-svc/binstart", "esp-idf-svc/critical-section"] # Enable only when building the examples
+examples = ["default", "esp-idf-svc/binstart", "esp-idf-svc/critical-section"] # Enable only when building the examples
 
 [dependencies]
 log = { version = "0.4", default-features = false }

@@ -73,7 +73,7 @@ where
     async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         Ok(self
             .load_blob(key, buf)
-            .map_err(|_| ErrorCode::StdIoError)?)
+            .map_err(|_| ErrorCode::StdIoError)?) // TODO: We need a dedicated PersistError code here
     }
 
     async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error> {

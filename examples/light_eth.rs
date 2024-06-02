@@ -38,6 +38,8 @@ use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
+use rs_matter_stack::persist::DummyPersist;
+
 use static_cell::ConstStaticCell;
 
 #[path = "dev_att/dev_att.rs"]
@@ -138,7 +140,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`
-        EspPersist::new_eth(EspKvBlobStore::new_default(nvs.clone())?, stack),
+        DummyPersist,
+        //EspPersist::new_eth(EspKvBlobStore::new_default(nvs.clone())?, stack),
         // The Matter stack need access to the netif on which we'll operate
         // Since we are pretending to use a wired Ethernet connection - yet -
         // we are using a Wifi STA, provide the Wifi netif here

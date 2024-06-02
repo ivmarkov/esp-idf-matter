@@ -13,6 +13,8 @@ use core::net::SocketAddr;
 
 use std::io;
 
+use alloc::boxed::Box;
+
 use edge_nal::UdpBind;
 use edge_nal_std::{Stack, UdpSocket};
 
@@ -156,7 +158,7 @@ impl<'a, 'd> Modem for EspModem<'a, 'd> {
     async fn wifi(&mut self) -> Self::WifiDevice<'_> {
         EspWifiDevice {
             sysloop: self.sysloop.clone(),
-            wifi: Mutex::new(
+            wifi: Mutex::new(Box::new(
                 AsyncWifi::wrap(
                     EspWifi::new(
                         &mut self.modem,
@@ -168,14 +170,14 @@ impl<'a, 'd> Modem for EspModem<'a, 'd> {
                     self.timers.clone(),
                 )
                 .unwrap(),
-            ),
+            )),
         }
     }
 }
 
 pub struct EspWifiDevice<'d> {
     sysloop: EspSystemEventLoop,
-    wifi: Mutex<NoopRawMutex, AsyncWifi<EspWifi<'d>>>,
+    wifi: Mutex<NoopRawMutex, Box<AsyncWifi<EspWifi<'d>>>>,
 }
 
 impl<'d> WifiDevice for EspWifiDevice<'d> {

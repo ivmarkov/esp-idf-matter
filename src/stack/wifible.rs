@@ -5,268 +5,273 @@
     esp_idf_comp_esp_event_enabled,
     not(esp_idf_btdm_ctrl_mode_br_edr_only),
     esp_idf_bt_enabled,
-    esp_idf_bt_bluedroid_enabled
+    esp_idf_bt_bluedroid_enabled,
+    feature = "std"
 ))]
 
-use core::borrow::Borrow;
-use core::cell::RefCell;
-use core::pin::pin;
+use core::net::SocketAddr;
+
+use std::io;
 
 use alloc::boxed::Box;
 
-use embassy_futures::select::select;
+use edge_nal::UdpBind;
+use edge_nal_std::{Stack, UdpSocket};
+
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 
-use esp_idf_svc::bt::{Ble, BleEnabled, BtDriver};
+use embedded_svc::wifi::asynch::Wifi;
+
+use enumset::EnumSet;
+
+use esp_idf_svc::bt::{Ble, BtDriver};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::modem::Modem;
-use esp_idf_svc::hal::peripheral::Peripheral;
+use esp_idf_svc::hal::peripheral::{Peripheral, PeripheralRef};
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
+use esp_idf_svc::hal::{into_ref, modem};
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::sys::{esp, esp_netif_create_ip6_linklocal, EspError};
 use esp_idf_svc::timer::EspTaskTimerService;
-use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
+use esp_idf_svc::wifi::{AccessPointInfo, AsyncWifi, Capability, Configuration, EspWifi};
 
-use log::info;
-
-use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
-use rs_matter::data_model::root_endpoint;
-use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
-use rs_matter::data_model::sdm::failsafe::FailSafe;
-use rs_matter::data_model::sdm::wifi_nw_diagnostics;
-use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
-    WiFiSecurity, WiFiVersion, WifiNwDiagCluster, WifiNwDiagData,
-};
-use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::transport::network::btp::{Btp, BtpContext};
-use rs_matter::utils::select::Coalesce;
-use rs_matter::CommissioningData;
+use rs_matter::error::{Error, ErrorCode};
+use rs_matter_stack::modem::{Modem, WifiDevice};
+use rs_matter_stack::netif::{Netif, NetifConf};
+use rs_matter_stack::network::{Embedding, Network};
+use rs_matter_stack::persist::KvBlobBuf;
+use rs_matter_stack::{MatterStack, WifiBle};
 
 use crate::ble::{BtpGattContext, BtpGattPeripheral};
-use crate::error::Error;
-use crate::wifi::mgmt::WifiManager;
-use crate::wifi::{comm, WifiContext};
-use crate::{MatterStack, Network};
 
-const MAX_WIFI_NETWORKS: usize = 2;
-const GATTS_APP_ID: u16 = 0;
+use super::netif::EspMatterNetif;
 
-/// An implementation of the `Network` trait for a Matter stack running over
-/// BLE during commissioning, and then over WiFi when operating.
+pub type EspWifiBleMatterStack<'a, E> = MatterStack<'a, EspWifiBle<E>>;
+pub type EspWifiBle<E> = WifiBle<EspRawMutex, KvBlobBuf<EspGatt<E>>>;
+
+/// An embedding of the ESP IDF Bluedroid Gatt peripheral context for the `WifiBle` network type from `rs-matter-stack`.
+/// Allows the memory of this context to be statically allocated and cost-initialized.
 ///
-/// The supported commissioning is of the non-concurrent type (as per the Matter Core spec),
-/// where the device - at any point in time - either runs Bluetooth or Wifi, but not both.
-/// This is done to save memory and to avoid the usage of the ESP IDF Co-exist driver.
+/// Usage:
+/// ```no_run
+/// MatterStack<WifiBle<EspGatt<E>>>::new();
+/// ```
 ///
-/// The BLE implementation used is the ESP IDF Bluedroid stack (not NimBLE).
-pub struct WifiBle {
-    btp_context: BtpContext<EspRawMutex>,
+/// ... where `E` can be a next-level, user-supplied embedding or just `()` if the user does not need to embed anything.
+pub struct EspGatt<E = ()> {
     btp_gatt_context: BtpGattContext,
-    wifi_context: WifiContext<MAX_WIFI_NETWORKS, NoopRawMutex>,
+    embedding: E,
 }
 
-impl WifiBle {
+impl<E> EspGatt<E>
+where
+    E: Embedding,
+{
+    #[allow(clippy::large_stack_frames)]
+    #[inline(always)]
     const fn new() -> Self {
         Self {
-            btp_context: BtpContext::new(),
             btp_gatt_context: BtpGattContext::new(),
-            wifi_context: WifiContext::new(),
+            embedding: E::INIT,
+        }
+    }
+
+    pub fn context(&self) -> &BtpGattContext {
+        &self.btp_gatt_context
+    }
+
+    pub fn embedding(&self) -> &E {
+        &self.embedding
+    }
+}
+
+impl<E> Embedding for EspGatt<E>
+where
+    E: Embedding,
+{
+    const INIT: Self = Self::new();
+}
+
+const GATTS_APP_ID: u16 = 0;
+
+pub struct EspModem<'a, 'd> {
+    context: &'a BtpGattContext,
+    modem: PeripheralRef<'d, modem::Modem>,
+    sysloop: EspSystemEventLoop,
+    timers: EspTaskTimerService,
+    nvs: EspDefaultNvsPartition,
+}
+
+impl<'a, 'd> EspModem<'a, 'd> {
+    pub fn new<E>(
+        modem: impl Peripheral<P = modem::Modem> + 'd,
+        sysloop: EspSystemEventLoop,
+        timers: EspTaskTimerService,
+        nvs: EspDefaultNvsPartition,
+        stack: &'a EspWifiBleMatterStack<E>,
+    ) -> Self
+    where
+        E: Embedding + 'static,
+    {
+        Self::wrap(
+            modem,
+            sysloop,
+            timers,
+            nvs,
+            stack.network().embedding().embedding().context(),
+        )
+    }
+
+    pub fn wrap(
+        modem: impl Peripheral<P = modem::Modem> + 'd,
+        sysloop: EspSystemEventLoop,
+        timers: EspTaskTimerService,
+        nvs: EspDefaultNvsPartition,
+        context: &'a BtpGattContext,
+    ) -> Self {
+        into_ref!(modem);
+
+        Self {
+            context,
+            modem,
+            sysloop,
+            timers,
+            nvs,
         }
     }
 }
 
-impl Network for WifiBle {
-    const INIT: Self = Self::new();
+impl<'a, 'd> Modem for EspModem<'a, 'd> {
+    type BleDevice<'t> = BtpGattPeripheral<'t, 't, Ble> where Self: 't;
+
+    type WifiDevice<'t> = EspWifiDevice<'t> where Self: 't;
+
+    async fn ble(&mut self) -> Self::BleDevice<'_> {
+        let bt = BtDriver::new(&mut self.modem, Some(self.nvs.clone())).unwrap();
+
+        let peripheral = BtpGattPeripheral::new(GATTS_APP_ID, bt, self.context).unwrap();
+
+        peripheral
+    }
+
+    async fn wifi(&mut self) -> Self::WifiDevice<'_> {
+        EspWifiDevice {
+            sysloop: self.sysloop.clone(),
+            wifi: Mutex::new(Box::new(
+                AsyncWifi::wrap(
+                    EspWifi::new(
+                        &mut self.modem,
+                        self.sysloop.clone(),
+                        Some(self.nvs.clone()),
+                    )
+                    .unwrap(),
+                    self.sysloop.clone(),
+                    self.timers.clone(),
+                )
+                .unwrap(),
+            )),
+        }
+    }
 }
 
-pub type WifiBleMatterStack<'a> = MatterStack<'a, WifiBle>;
+pub struct EspWifiDevice<'d> {
+    sysloop: EspSystemEventLoop,
+    wifi: Mutex<NoopRawMutex, Box<AsyncWifi<EspWifi<'d>>>>,
+}
 
-impl<'a> MatterStack<'a, WifiBle> {
-    /// Return a metadata for the root (Endpoint 0) of the Matter Node
-    /// configured for BLE+Wifi network.
-    pub const fn root_metadata() -> Endpoint<'static> {
-        root_endpoint::endpoint(0, OperNwType::Wifi)
+impl<'d> WifiDevice for EspWifiDevice<'d> {
+    type L2<'t> = EspL2<'t, 'd> where Self: 't;
+
+    type L3<'t> = EspL3<'t, 'd> where Self: 't;
+
+    async fn split(&mut self) -> (Self::L2<'_>, Self::L3<'_>) {
+        (EspL2(self), EspL3(self))
+    }
+}
+
+pub struct EspL2<'a, 'd>(&'a EspWifiDevice<'d>);
+
+impl<'a, 'd> Wifi for EspL2<'a, 'd> {
+    type Error = EspError;
+
+    async fn get_capabilities(&self) -> Result<EnumSet<Capability>, Self::Error> {
+        self.0.wifi.lock().await.get_capabilities()
     }
 
-    /// Return a handler for the root (Endpoint 0) of the Matter Node
-    /// configured for BLE+Wifi network.
-    pub fn root_handler(&self) -> WifiBleRootEndpointHandler<'_> {
-        handler(
-            0,
-            self.matter(),
-            comm::WifiNwCommCluster::new(*self.matter().borrow(), &self.network.wifi_context),
-            wifi_nw_diagnostics::ID,
-            HandlerCompat(WifiNwDiagCluster::new(
-                *self.matter().borrow(),
-                // TODO: Update with actual information
-                WifiNwDiagData {
-                    bssid: [0; 6],
-                    security_type: WiFiSecurity::Unspecified,
-                    wifi_version: WiFiVersion::B,
-                    channel_number: 20,
-                    rssi: 0,
-                },
-            )),
-            false,
-        )
+    async fn get_configuration(&self) -> Result<Configuration, Self::Error> {
+        self.0.wifi.lock().await.get_configuration()
     }
 
-    /// Resets the Matter instance to the factory defaults putting it into a
-    /// Commissionable mode.
-    pub fn reset(&self) -> Result<(), Error> {
-        // TODO: Reset fabrics and ACLs
-        self.network.btp_gatt_context.reset()?;
-        // TODO self.network.btp_context.reset();
-        self.network.wifi_context.reset();
+    async fn set_configuration(&mut self, conf: &Configuration) -> Result<(), Self::Error> {
+        self.0.wifi.lock().await.set_configuration(conf)
+    }
+
+    async fn start(&mut self) -> Result<(), Self::Error> {
+        self.0.wifi.lock().await.start().await
+    }
+
+    async fn stop(&mut self) -> Result<(), Self::Error> {
+        self.0.wifi.lock().await.stop().await
+    }
+
+    async fn connect(&mut self) -> Result<(), Self::Error> {
+        let mut wifi = self.0.wifi.lock().await;
+
+        wifi.connect().await?;
+
+        esp!(unsafe { esp_netif_create_ip6_linklocal(wifi.wifi().sta_netif().handle() as _) })?;
 
         Ok(())
     }
 
-    /// Return information whether the Matter instance is already commissioned.
-    ///
-    /// User might need to reach out to this method only when it needs finer-grained control
-    /// and utilizes the `commission` and `operate` methods rather than the all-in-one `run` loop.
-    pub async fn is_commissioned(&self, _nvs: EspDefaultNvsPartition) -> Result<bool, Error> {
-        // TODO
-        Ok(false)
+    async fn disconnect(&mut self) -> Result<(), Self::Error> {
+        self.0.wifi.lock().await.disconnect().await
     }
 
-    /// A utility method to run the Matter stack in Operating mode (as per the Matter Core spec) over Wifi.
-    ///
-    /// This method assumes that the Matter instance is already commissioned and therefore
-    /// does not take a `CommissioningData` parameter.
-    ///
-    /// It is just a composition of the `MatterStack::run_with_netif` method, and the `WifiManager::run` method,
-    /// where the former takes care of running the main Matter loop, while the latter takes care of ensuring
-    /// that the Matter instance stays connected to the Wifi network.
-    pub async fn operate<'d, H>(
-        &self,
-        sysloop: EspSystemEventLoop,
-        timer_service: EspTaskTimerService,
-        nvs: EspDefaultNvsPartition,
-        wifi: &mut EspWifi<'d>,
-        handler: H,
-    ) -> Result<(), Error>
-    where
-        H: AsyncHandler + AsyncMetadata,
-    {
-        info!("Running Matter in operating mode (Wifi)");
-
-        let wifi =
-            Mutex::<NoopRawMutex, _>::new(AsyncWifi::wrap(wifi, sysloop.clone(), timer_service)?);
-
-        let mgr = WifiManager::new(&wifi, &self.network.wifi_context, sysloop.clone());
-
-        let mut main = pin!(self.run_with_netif(sysloop, nvs, &wifi, None, handler));
-        let mut wifi = pin!(mgr.run());
-
-        select(&mut wifi, &mut main).coalesce().await
+    async fn is_started(&self) -> Result<bool, Self::Error> {
+        self.0.wifi.lock().await.is_started()
     }
 
-    /// A utility method to run the Matter stack in Commissioning mode (as per the Matter Core spec) over BLE.
-    /// Essentially an instantiation of `MatterStack::run_with_transport` with the BLE transport.
-    ///
-    /// Note: make sure to call `MatterStack::reset` before calling this method, as all fabrics and ACLs, as well as all
-    /// transport state should be reset.
-    pub async fn commission<'d, H, B>(
-        &'static self,
-        nvs: EspDefaultNvsPartition,
-        bt: &BtDriver<'d, B>,
-        dev_comm: CommissioningData,
-        handler: H,
-    ) -> Result<(), Error>
-    where
-        H: AsyncHandler + AsyncMetadata,
-        B: BleEnabled,
-    {
-        info!("Running Matter in commissioning mode (BLE)");
-
-        let peripheral = BtpGattPeripheral::new(GATTS_APP_ID, bt, &self.network.btp_gatt_context)?;
-
-        let btp = Btp::new(peripheral, &self.network.btp_context);
-
-        let mut ble = pin!(async {
-            btp.run("BT", self.matter().dev_det(), &dev_comm)
-                .await
-                .map_err(Into::into)
-        });
-
-        let mut main = pin!(self.run_with_transport(
-            &btp,
-            &btp,
-            nvs,
-            Some((
-                dev_comm.clone(),
-                DiscoveryCapabilities::new(false, true, false)
-            )),
-            &handler
-        ));
-
-        select(&mut ble, &mut main).coalesce().await
+    async fn is_connected(&self) -> Result<bool, Self::Error> {
+        self.0.wifi.lock().await.is_connected()
     }
 
-    /// An all-in-one "run everything" method that automatically
-    /// places the Matter stack either in Commissioning or in Operating mode, depending
-    /// on the state of the device as persisted in the NVS storage.
-    pub async fn run<'d, H>(
-        &'static self,
-        sysloop: EspSystemEventLoop,
-        timer_service: EspTaskTimerService,
-        nvs: EspDefaultNvsPartition,
-        mut modem: impl Peripheral<P = Modem> + 'd,
-        dev_comm: CommissioningData,
-        handler: H,
-    ) -> Result<(), Error>
-    where
-        H: AsyncHandler + AsyncMetadata,
-    {
-        info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
+    async fn scan_n<const N: usize>(
+        &mut self,
+    ) -> Result<(heapless::Vec<AccessPointInfo, N>, usize), Self::Error> {
+        self.0.wifi.lock().await.scan_n().await
+    }
 
-        loop {
-            if !self.is_commissioned(nvs.clone()).await? {
-                // Reset to factory defaults everything, as we'll do commissioning all over
-                self.reset()?;
-
-                let bt = BtDriver::<Ble>::new(&mut modem, Some(nvs.clone()))?;
-
-                info!("BLE driver initialized");
-
-                let mut main = pin!(self.commission(nvs.clone(), &bt, dev_comm.clone(), &handler));
-                let mut wait_network_connect =
-                    pin!(self.network.wifi_context.wait_network_connect());
-
-                select(&mut main, &mut wait_network_connect)
-                    .coalesce()
-                    .await?;
-            }
-
-            // As per spec, we need to indicate the expectation of a re-arm with a CASE session
-            // even if the current session is a PASE one (this is specific for non-concurrent commissiioning flows)
-            let failsafe: &RefCell<FailSafe> = self.matter().borrow();
-            failsafe.borrow_mut().expect_case_rearm()?;
-
-            let mut wifi = Box::new(EspWifi::new(
-                &mut modem,
-                sysloop.clone(),
-                Some(nvs.clone()),
-            )?);
-
-            info!("Wifi driver initialized");
-
-            self.operate(
-                sysloop.clone(),
-                timer_service.clone(),
-                nvs.clone(),
-                &mut wifi,
-                &handler,
-            )
-            .await?;
-        }
+    async fn scan(&mut self) -> Result<alloc::vec::Vec<AccessPointInfo>, Self::Error> {
+        self.0.wifi.lock().await.scan().await
     }
 }
 
-pub type WifiBleRootEndpointHandler<'a> = RootEndpointHandler<
-    'a,
-    comm::WifiNwCommCluster<'a, MAX_WIFI_NETWORKS, NoopRawMutex>,
-    HandlerCompat<WifiNwDiagCluster>,
->;
+pub struct EspL3<'a, 'd>(&'a EspWifiDevice<'d>);
+
+impl<'a, 'd> Netif for EspL3<'a, 'd> {
+    async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
+        let wifi = self.0.wifi.lock().await;
+
+        Ok(EspMatterNetif::get_netif_conf(wifi.wifi().sta_netif()).ok())
+    }
+
+    async fn wait_conf_change(&self) -> Result<(), Error> {
+        EspMatterNetif::wait_any_conf_change(&self.0.sysloop)
+            .await
+            .map_err(|_| ErrorCode::NoNetworkInterface)?; // TODO
+
+        Ok(())
+    }
+}
+
+impl<'a, 'd> UdpBind for EspL3<'a, 'd> {
+    type Error = io::Error;
+
+    type Socket<'t> = UdpSocket where Self: 't;
+
+    async fn bind(&self, local: SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
+        Stack::new().bind(local).await
+    }
+}

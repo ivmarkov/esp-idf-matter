@@ -66,6 +66,8 @@ impl<E> EspGatt<E>
 where
     E: Embedding,
 {
+    #[allow(clippy::large_stack_frames)]
+    #[inline(always)]
     const fn new() -> Self {
         Self {
             btp_gatt_context: BtpGattContext::new(),

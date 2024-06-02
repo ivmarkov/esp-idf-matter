@@ -56,7 +56,7 @@ struct State {
     response: GattResponse,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct IndBuffer {
     addr: BtAddr,
     data: heapless::Vec<u8, MAX_MTU_SIZE>,
@@ -73,6 +73,8 @@ pub struct BtpGattContext {
 
 impl BtpGattContext {
     /// Create a new instance.
+    #[allow(clippy::large_stack_frames)]
+    #[inline(always)]
     pub const fn new() -> Self {
         Self {
             state: Mutex::new(RefCell::new(State {
@@ -120,6 +122,9 @@ impl BtpGattContext {
 }
 
 impl Default for BtpGattContext {
+    // TODO
+    #[allow(clippy::large_stack_frames)]
+    #[inline(always)]
     fn default() -> Self {
         Self::new()
     }

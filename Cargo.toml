@@ -11,11 +11,12 @@ repository = "https://github.com/ivmarkov/esp-idf-matter"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 build = "build.rs"
-#documentation = "https://docs.esp-rs.org/esp-idf-matter/"
 rust-version = "1.77"
 
 #[patch.'https://github.com/ivmarkov/async-io-mini']
 #async-io-mini = { path = "../async-io-mini" }
+#[patch.'https://github.com/ivmarkov/rs-matter-stack']
+#rs-matter-stack = { path = "../rs-matter-stack", default-features = false, features = ["std"], optional = true }
 
 [patch.crates-io]
 embedded-svc = { git = "https://github.com/esp-rs/embedded-svc" }
@@ -23,8 +24,6 @@ esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", branch = "gatt" }
 #esp-idf-svc = { path = "../esp-idf-svc" }
 rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
-rs-matter-macros = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
-#rs-matter-macros = { path = "../rs-matter/rs-matter-macros" }
 edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal = { path = "../edge-net/edge-nal" }
 edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
@@ -56,10 +55,8 @@ embassy-time = { version = "0.3", features = ["generic-queue"] }
 esp-idf-svc = { version = "0.48", default-features = false, features = ["alloc", "embassy-sync", "embassy-time-driver", "experimental"] }
 embedded-svc = { version = "0.27", default-features = false }
 rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
-rs-matter-macros = "0.1"
 async-io = { version = "=2.0.0", default-features = false } # Workaround for https://github.com/smol-rs/async-lock/issues/84
 rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", default-features = false, features = ["std"], optional = true }
-#rs-matter-stack = { path = "../rs-matter-stack", default-features = false, features = ["std"], optional = true }
 edge-nal = "0.2"
 edge-nal-std = { version = "0.2", default-features = false, optional = true }
 

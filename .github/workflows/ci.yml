@@ -44,6 +44,7 @@ jobs:
         uses: esp-rs/xtensa-toolchain@v1.5.1
         with:
           default: true
+          version: "1.78.0"
 
       - name: Build | Fmt Check
         run: cargo fmt -- --check

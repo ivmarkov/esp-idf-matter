@@ -11,7 +11,7 @@ repository = "https://github.com/ivmarkov/esp-idf-matter"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 build = "build.rs"
-rust-version = "1.77"
+rust-version = "1.78"
 
 #[patch.'https://github.com/ivmarkov/async-io-mini']
 #async-io-mini = { path = "../async-io-mini" }

@@ -173,8 +173,6 @@ where
     where
         F: FnMut(GattPeripheralEvent) + Send + 'd,
     {
-        let _pin = service_adv_data.pin();
-
         let gap = EspBleGap::new(&self.driver)?;
         let gatts = EspGatts::new(&self.driver)?;
 

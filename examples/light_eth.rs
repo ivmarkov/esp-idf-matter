@@ -153,6 +153,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         },
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
+        // No user future to run
+        core::future::pending(),
     ));
 
     // Just for demoing purposes:

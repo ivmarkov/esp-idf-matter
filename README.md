@@ -32,7 +32,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, EspWifiBleMatterStack, EspKvBlobStore, EspPersist, EspModem};
+use esp_idf_matter::{init_async_io, EspKvBlobStore, EspModem, EspPersist, EspWifiBleMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -52,6 +52,8 @@ use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
+use rs_matter_stack::persist::DummyPersist;
+
 use static_cell::ConstStaticCell;
 
 #[path = "dev_att/dev_att.rs"]
@@ -66,7 +68,7 @@ fn main() -> Result<(), anyhow::Error> {
     // confused by the low priority of the ESP IDF main task
     // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(65 * 1024)
+        .stack_size(70 * 1024)
         .spawn(|| {
             // Eagerly initialize `async-io` to minimize the risk of stack blowups later on
             init_async_io()?;
@@ -133,7 +135,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`
-        EspPersist::new_wifi_ble(EspKvBlobStore::new_default(nvs.clone())?, stack),
+        DummyPersist,
+        //EspPersist::new_wifi_ble(EspKvBlobStore::new_default(nvs.clone())?, stack),
         // The Matter stack needs the BT/Wifi modem peripheral - and in general -
         // the Bluetooth / Wifi connections will be managed by the Matter stack itself
         // For finer-grained control, call `MatterStack::is_commissioned`,
@@ -146,6 +149,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         },
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
+        // No user future to run
+        core::future::pending(),
     ));
 
     // Just for demoing purposes:

@@ -7,7 +7,6 @@
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 
-use core::borrow::Borrow;
 use core::pin::pin;
 
 use embassy_futures::select::select;
@@ -32,7 +31,7 @@ use log::{error, info};
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::cluster_on_off;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::data_model::objects::{Endpoint, HandlerCompat, Node};
+use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
 use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::select::Coalesce;
@@ -113,7 +112,7 @@ async fn matter() -> Result<(), anyhow::Error> {
 
     // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
-    let on_off = cluster_on_off::OnOffCluster::new(*stack.matter().borrow());
+    let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(stack.matter().rand()));
 
     // Chain our endpoint clusters with the
     // (root) Endpoint 0 system clusters in the final handler
@@ -130,7 +129,9 @@ async fn matter() -> Result<(), anyhow::Error> {
         .chain(
             LIGHT_ENDPOINT_ID,
             descriptor::ID,
-            HandlerCompat(descriptor::DescriptorCluster::new(*stack.matter().borrow())),
+            HandlerCompat(descriptor::DescriptorCluster::new(Dataver::new_rand(
+                stack.matter().rand(),
+            ))),
         );
 
     // Run the Matter stack with our handler
@@ -148,7 +149,7 @@ async fn matter() -> Result<(), anyhow::Error> {
         EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
         // Hard-coded for demo purposes
         CommissioningData {
-            verifier: VerifierData::new_with_pw(123456, *stack.matter().borrow()),
+            verifier: VerifierData::new_with_pw(123456, stack.matter().rand()),
             discriminator: 250,
         },
         // Our `AsyncHandler` + `AsyncMetadata` impl

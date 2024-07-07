@@ -6,11 +6,8 @@
 ))]
 
 use core::borrow::Borrow;
-use core::cell::RefCell;
 
 use alloc::borrow::ToOwned;
-
-use embassy_sync::blocking_mutex::Mutex;
 
 use enumset::enum_set;
 
@@ -32,7 +29,10 @@ use rs_matter::transport::network::btp::{
     C2_CHARACTERISTIC_UUID, C2_MAX_LEN, MATTER_BLE_SERVICE_UUID16, MAX_BTP_SESSIONS,
 };
 use rs_matter::transport::network::BtAddr;
+use rs_matter::utils::blmutex::Mutex;
 use rs_matter::utils::ifmutex::IfMutex;
+use rs_matter::utils::init::{init, Init};
+use rs_matter::utils::refcell::RefCell;
 use rs_matter::utils::signal::Signal;
 
 const MAX_CONNECTIONS: usize = MAX_BTP_SESSIONS;
@@ -52,14 +52,58 @@ struct State {
     c1_handle: Option<Handle>,
     c2_handle: Option<Handle>,
     c2_cccd_handle: Option<Handle>,
-    connections: heapless::Vec<Connection, MAX_CONNECTIONS>,
+    connections: rs_matter::utils::vec::Vec<Connection, MAX_CONNECTIONS>,
     response: GattResponse,
+}
+
+impl State {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            gatt_if: None,
+            service_handle: None,
+            c1_handle: None,
+            c2_handle: None,
+            c2_cccd_handle: None,
+            connections: rs_matter::utils::vec::Vec::new(),
+            response: GattResponse::new(),
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            gatt_if: None,
+            service_handle: None,
+            c1_handle: None,
+            c2_handle: None,
+            c2_cccd_handle: None,
+            connections <- rs_matter::utils::vec::Vec::init(),
+            response: GattResponse::new(), // TODO
+        })
+    }
 }
 
 #[derive(Debug)]
 struct IndBuffer {
     addr: BtAddr,
-    data: heapless::Vec<u8, MAX_MTU_SIZE>,
+    data: rs_matter::utils::vec::Vec<u8, MAX_MTU_SIZE>,
+}
+
+impl IndBuffer {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            addr: BtAddr([0; 6]),
+            data: rs_matter::utils::vec::Vec::new(),
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            addr: BtAddr([0; 6]),
+            data <- rs_matter::utils::vec::Vec::init(),
+        })
+    }
 }
 
 /// The `'static` state of the `BtpGattPeripheral` struct.
@@ -77,21 +121,19 @@ impl BtpGattContext {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(State {
-                gatt_if: None,
-                service_handle: None,
-                c1_handle: None,
-                c2_handle: None,
-                c2_cccd_handle: None,
-                connections: heapless::Vec::new(),
-                response: GattResponse::new(),
-            })),
-            ind: IfMutex::new(IndBuffer {
-                addr: BtAddr([0; 6]),
-                data: heapless::Vec::new(),
-            }),
+            state: Mutex::new(RefCell::new(State::new())),
+            ind: IfMutex::new(IndBuffer::new()),
             ind_in_flight: Signal::new(false),
         }
+    }
+
+    #[allow(clippy::large_stack_frames)]
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            state <- Mutex::init(RefCell::init(State::init())),
+            ind <- IfMutex::init(IndBuffer::init()),
+            ind_in_flight: Signal::new(false),
+        })
     }
 
     pub(crate) fn reset(&self) -> Result<(), EspError> {

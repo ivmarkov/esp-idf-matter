@@ -37,6 +37,8 @@ use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_svc::wifi::{AccessPointInfo, AsyncWifi, Capability, Configuration, EspWifi};
 
 use rs_matter::error::{Error, ErrorCode};
+use rs_matter::utils::init::{init, Init};
+
 use rs_matter_stack::modem::{Modem, WifiDevice};
 use rs_matter_stack::netif::{Netif, NetifConf};
 use rs_matter_stack::network::{Embedding, Network};
@@ -77,6 +79,13 @@ where
         }
     }
 
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            btp_gatt_context <- BtpGattContext::init(),
+            embedding <- E::init(),
+        })
+    }
+
     pub fn context(&self) -> &BtpGattContext {
         &self.btp_gatt_context
     }
@@ -91,6 +100,10 @@ where
     E: Embedding,
 {
     const INIT: Self = Self::new();
+
+    fn init() -> impl Init<Self> {
+        EspGatt::init()
+    }
 }
 
 const GATTS_APP_ID: u16 = 0;

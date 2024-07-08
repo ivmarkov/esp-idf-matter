@@ -25,7 +25,8 @@ edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal = { path = "../edge-net/edge-nal" }
 edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal-std = { path = "../edge-net/edge-nal-std" }
-esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc", branch = "ble-esp32c6" }
+esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc" }
+esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal" }
 
 [profile.release]
 opt-level = "s"

@@ -29,11 +29,10 @@ use rs_matter::transport::network::btp::{
     C2_CHARACTERISTIC_UUID, C2_MAX_LEN, MATTER_BLE_SERVICE_UUID16, MAX_BTP_SESSIONS,
 };
 use rs_matter::transport::network::BtAddr;
-use rs_matter::utils::blmutex::Mutex;
-use rs_matter::utils::ifmutex::IfMutex;
+use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init};
-use rs_matter::utils::refcell::RefCell;
-use rs_matter::utils::signal::Signal;
+use rs_matter::utils::sync::blocking::Mutex;
+use rs_matter::utils::sync::{IfMutex, Signal};
 
 const MAX_CONNECTIONS: usize = MAX_BTP_SESSIONS;
 const MAX_MTU_SIZE: usize = 512;
@@ -52,7 +51,7 @@ struct State {
     c1_handle: Option<Handle>,
     c2_handle: Option<Handle>,
     c2_cccd_handle: Option<Handle>,
-    connections: rs_matter::utils::vec::Vec<Connection, MAX_CONNECTIONS>,
+    connections: rs_matter::utils::storage::Vec<Connection, MAX_CONNECTIONS>,
     response: GattResponse,
 }
 
@@ -65,7 +64,7 @@ impl State {
             c1_handle: None,
             c2_handle: None,
             c2_cccd_handle: None,
-            connections: rs_matter::utils::vec::Vec::new(),
+            connections: rs_matter::utils::storage::Vec::new(),
             response: GattResponse::new(),
         }
     }
@@ -77,7 +76,7 @@ impl State {
             c1_handle: None,
             c2_handle: None,
             c2_cccd_handle: None,
-            connections <- rs_matter::utils::vec::Vec::init(),
+            connections <- rs_matter::utils::storage::Vec::init(),
             response: GattResponse::new(), // TODO
         })
     }
@@ -86,7 +85,7 @@ impl State {
 #[derive(Debug)]
 struct IndBuffer {
     addr: BtAddr,
-    data: rs_matter::utils::vec::Vec<u8, MAX_MTU_SIZE>,
+    data: rs_matter::utils::storage::Vec<u8, MAX_MTU_SIZE>,
 }
 
 impl IndBuffer {
@@ -94,14 +93,14 @@ impl IndBuffer {
     const fn new() -> Self {
         Self {
             addr: BtAddr([0; 6]),
-            data: rs_matter::utils::vec::Vec::new(),
+            data: rs_matter::utils::storage::Vec::new(),
         }
     }
 
     fn init() -> impl Init<Self> {
         init!(Self {
             addr: BtAddr([0; 6]),
-            data <- rs_matter::utils::vec::Vec::init(),
+            data <- rs_matter::utils::storage::Vec::init(),
         })
     }
 }

@@ -24,7 +24,7 @@ use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::netif::{EspNetif, IpEvent};
 use esp_idf_svc::sys::{esp, esp_netif_get_ip6_linklocal, EspError, ESP_FAIL};
 
-use rs_matter::utils::notification::Notification;
+use rs_matter::utils::sync::Notification;
 use rs_matter_stack::netif::{Netif, NetifConf};
 
 const TIMEOUT_PERIOD_SECS: u8 = 5;

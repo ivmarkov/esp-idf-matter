@@ -45,7 +45,6 @@ examples = ["default", "esp-idf-svc/binstart", "esp-idf-svc/critical-section"] #
 log = { version = "0.4", default-features = false }
 heapless = "0.8"
 enumset = { version = "1", default-features = false }
-scopeguard = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.6"
 embassy-time = { version = "0.3", features = ["generic-queue"] }

@@ -77,7 +77,7 @@ impl State {
             c2_handle: None,
             c2_cccd_handle: None,
             connections <- rs_matter::utils::storage::Vec::init(),
-            response: GattResponse::new(), // TODO
+            response <- gatt_response::init(),
         })
     }
 }
@@ -843,5 +843,38 @@ where
         }
 
         Ok(())
+    }
+}
+
+mod gatt_response {
+    use esp_idf_svc::bt::ble::gatt::GattResponse;
+    use esp_idf_svc::sys::{esp_gatt_rsp_t, esp_gatt_value_t};
+
+    use rs_matter::utils::init::{init, init_from_closure, zeroed, Init};
+
+    /// Return an in-place initializer for `GattResponse`.
+    ///
+    /// Works by initializing the `GattResponse` struct in-place using the `esp_gatt_rsp_t` type,
+    /// which is possible because `GattResponse` is a `#[repr(transparent)]` newtype over `esp_gatt_rsp_t`.
+    pub fn init() -> impl Init<GattResponse> {
+        unsafe {
+            init_from_closure(|slot: *mut GattResponse| {
+                let slot = slot as *mut esp_gatt_rsp_t;
+
+                init_esp_gatt_response().__init(slot)
+            })
+        }
+    }
+
+    fn init_esp_gatt_response() -> impl Init<esp_gatt_rsp_t> {
+        init!(esp_gatt_rsp_t {
+           attr_value <- init!(esp_gatt_value_t {
+               len: 0,
+               value <- zeroed(),
+               handle: 0,
+               offset: 0,
+               auth_req: 0,
+           }),
+        })
     }
 }

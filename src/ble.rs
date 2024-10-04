@@ -1,10 +1,3 @@
-#![cfg(all(
-    not(esp_idf_btdm_ctrl_mode_br_edr_only),
-    esp_idf_bt_enabled,
-    esp_idf_bt_bluedroid_enabled,
-    not(esp32s2)
-))]
-
 use core::borrow::Borrow;
 
 use alloc::borrow::ToOwned;
@@ -108,13 +101,13 @@ impl IndBuffer {
 /// The `'static` state of the `BtpGattPeripheral` struct.
 /// Isolated as a separate struct to allow for `const fn` construction
 /// and static allocation.
-pub struct BtpGattContext {
+pub struct EspBtpGattContext {
     state: Mutex<EspRawMutex, RefCell<State>>,
     ind: IfMutex<EspRawMutex, IndBuffer>,
     ind_in_flight: Signal<EspRawMutex, bool>,
 }
 
-impl BtpGattContext {
+impl EspBtpGattContext {
     /// Create a new instance.
     #[allow(clippy::large_stack_frames)]
     #[inline(always)]
@@ -126,6 +119,7 @@ impl BtpGattContext {
         }
     }
 
+    /// Return an in-place initializer for `EspBtpGattContext`.
     #[allow(clippy::large_stack_frames)]
     pub fn init() -> impl Init<Self> {
         init!(Self {
@@ -162,7 +156,7 @@ impl BtpGattContext {
     }
 }
 
-impl Default for BtpGattContext {
+impl Default for EspBtpGattContext {
     // TODO
     #[allow(clippy::large_stack_frames)]
     #[inline(always)]
@@ -173,16 +167,16 @@ impl Default for BtpGattContext {
 
 /// A GATT peripheral implementation for the BTP protocol in `rs-matter`.
 /// Implements the `GattPeripheral` trait.
-pub struct BtpGattPeripheral<'a, 'd, M>
+pub struct EspBtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,
 {
     app_id: u16,
     driver: BtDriver<'d, M>,
-    context: &'a BtpGattContext,
+    context: &'a EspBtpGattContext,
 }
 
-impl<'a, 'd, M> BtpGattPeripheral<'a, 'd, M>
+impl<'a, 'd, M> EspBtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,
 {
@@ -193,7 +187,7 @@ where
     pub fn new(
         app_id: u16,
         driver: BtDriver<'d, M>,
-        context: &'a BtpGattContext,
+        context: &'a EspBtpGattContext,
     ) -> Result<Self, EspError> {
         context.reset()?;
 
@@ -299,7 +293,7 @@ where
     }
 }
 
-impl<'a, 'd, M> GattPeripheral for BtpGattPeripheral<'a, 'd, M>
+impl<'a, 'd, M> GattPeripheral for EspBtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,
 {
@@ -312,7 +306,7 @@ where
     where
         F: FnMut(GattPeripheralEvent) + Send + Clone + 'static,
     {
-        BtpGattPeripheral::run(self, service_name, adv_data, callback)
+        EspBtpGattPeripheral::run(self, service_name, adv_data, callback)
             .await
             .map_err(|_| ErrorCode::BtpError)?;
 
@@ -320,7 +314,7 @@ where
     }
 
     async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), rs_matter::error::Error> {
-        BtpGattPeripheral::indicate(self, data, address)
+        EspBtpGattPeripheral::indicate(self, data, address)
             .await
             .map_err(|_| ErrorCode::BtpError)?;
 
@@ -336,7 +330,7 @@ where
     app_id: u16,
     gap: &'a EspBleGap<'d, M, T>,
     gatts: &'a EspGatts<'d, M, T>,
-    ctx: &'a BtpGattContext,
+    ctx: &'a EspBtpGattContext,
 }
 
 impl<'a, 'd, M, T> GattExecContext<'a, 'd, M, T>
@@ -348,7 +342,7 @@ where
         app_id: u16,
         gap: &'a EspBleGap<'d, M, T>,
         gatts: &'a EspGatts<'d, M, T>,
-        ctx: &'a BtpGattContext,
+        ctx: &'a EspBtpGattContext,
     ) -> Self {
         Self {
             app_id,

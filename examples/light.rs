@@ -10,7 +10,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, EspKvBlobStore, EspModem, EspPersist, EspWifiBleMatterStack};
+use esp_idf_matter::{init_async_io, EspKvBlobStore, EspMatterBle, EspPersist, EspWifiMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -79,7 +79,7 @@ async fn matter() -> Result<(), anyhow::Error> {
     // as we'll run it in this thread
     let stack = MATTER_STACK
         .uninit()
-        .init_with(EspWifiBleMatterStack::init_default(
+        .init_with(EspWifiMatterStack::init_default(
             &BasicInfoConfig {
                 vid: 0xFFF1,
                 pid: 0x8000,
@@ -90,6 +90,10 @@ async fn matter() -> Result<(), anyhow::Error> {
                 device_name: "MyLight",
                 product_name: "ACME Light",
                 vendor_name: "ACME",
+            },
+            BasicCommData {
+                password: 20202021,
+                discriminator: 3840,
             },
             &DEV_ATT,
         ));
@@ -137,12 +141,7 @@ async fn matter() -> Result<(), anyhow::Error> {
         // the Bluetooth / Wifi connections will be managed by the Matter stack itself
         // For finer-grained control, call `MatterStack::is_commissioned`,
         // `MatterStack::commission` and `MatterStack::operate`
-        EspModem::new(peripherals.modem, sysloop, timers, nvs, stack),
-        // Hard-coded for demo purposes
-        CommissioningData {
-            verifier: VerifierData::new_with_pw(123456, stack.matter().rand()),
-            discriminator: 250,
-        },
+        EspMatterBle::new(peripherals.modem, sysloop, timers, nvs, stack),
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -179,7 +178,7 @@ async fn matter() -> Result<(), anyhow::Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: StaticCell<EspWifiBleMatterStack<()>> = StaticCell::new();
+static MATTER_STACK: StaticCell<EspWifiMatterStack<()>> = StaticCell::new();
 
 static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
@@ -191,7 +190,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EspWifiBleMatterStack::<()>::root_metadata(),
+        EspWifiMatterStack::<()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_type: DEV_TYPE_ON_OFF_LIGHT,

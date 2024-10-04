@@ -1,5 +1,3 @@
-#![cfg(esp_idf_comp_nvs_flash_enabled)]
-
 use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsPartitionId};
 use esp_idf_svc::sys::EspError;
 
@@ -9,7 +7,7 @@ use rs_matter::error::{Error, ErrorCode};
 
 use rs_matter_stack::persist::{KvBlobStore, KvPersist};
 
-pub type EspPersist<'a, T, const N: usize, M> = KvPersist<'a, EspKvBlobStore<T>, N, M>;
+pub type EspMatterPersist<'a, T, C> = KvPersist<'a, EspKvBlobStore<T>, C>;
 
 /// A `KvBlobStore`` implementation that uses the ESP IDF NVS API
 /// to store and load the BLOBs.

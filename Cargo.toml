@@ -13,13 +13,16 @@ readme = "README.md"
 build = "build.rs"
 rust-version = "1.78"
 
+#[lib]
+#harness = false
+
 #[patch.'https://github.com/ivmarkov/async-io-mini']
 #async-io-mini = { path = "../async-io-mini" }
-#[patch.'https://github.com/ivmarkov/rs-matter-stack']
-#rs-matter-stack = { path = "../rs-matter-stack" }
+[patch.'https://github.com/ivmarkov/rs-matter-stack']
+rs-matter-stack = { path = "../rs-matter-stack" }
 
 [patch.crates-io]
-rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "tip" }
+rs-matter = { git = "https://github.com/ivmarkov/rs-matter" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
 #edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal = { path = "../edge-net/edge-nal" }

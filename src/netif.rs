@@ -1,9 +1,4 @@
-#![cfg(all(
-    esp_idf_comp_esp_netif_enabled,
-    esp_idf_comp_esp_event_enabled,
-    feature = "std"
-))]
-
+use core::borrow::Borrow;
 use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
@@ -29,25 +24,28 @@ use rs_matter_stack::netif::{Netif, NetifConf};
 
 const TIMEOUT_PERIOD_SECS: u8 = 5;
 
-pub struct EspMatterNetif<'a> {
-    netif: &'a EspNetif,
+pub struct EspMatterNetif<T> {
+    netif: T,
     sysloop: EspSystemEventLoop,
 }
 
-impl<'a> EspMatterNetif<'a> {
-    pub const fn new(netif: &'a EspNetif, sysloop: EspSystemEventLoop) -> Self {
+impl<T> EspMatterNetif<T>
+where
+    T: Borrow<EspNetif>,
+{
+    pub const fn new(netif: T, sysloop: EspSystemEventLoop) -> Self {
         Self { netif, sysloop }
     }
 
     fn get_conf(&self) -> Result<NetifConf, EspError> {
-        Self::get_netif_conf(self.netif)
+        Self::get_netif_conf(self.netif.borrow())
     }
 
     async fn wait_conf_change(&self) -> Result<(), EspError> {
         Self::wait_any_conf_change(&self.sysloop).await
     }
 
-    pub(crate) fn get_netif_conf(netif: &EspNetif) -> Result<NetifConf, EspError> {
+    pub fn get_netif_conf(netif: &EspNetif) -> Result<NetifConf, EspError> {
         let ip_info = netif.get_ip_info()?;
 
         let ipv4: Ipv4Addr = ip_info.ip.octets().into();
@@ -91,7 +89,7 @@ impl<'a> EspMatterNetif<'a> {
         })
     }
 
-    pub(crate) async fn wait_any_conf_change(sysloop: &EspSystemEventLoop) -> Result<(), EspError> {
+    pub async fn wait_any_conf_change(sysloop: &EspSystemEventLoop) -> Result<(), EspError> {
         let notification = Arc::new(Notification::<EspRawMutex>::new());
 
         let _subscription = {
@@ -111,7 +109,10 @@ impl<'a> EspMatterNetif<'a> {
     }
 }
 
-impl<'a> Netif for EspMatterNetif<'a> {
+impl<T> Netif for EspMatterNetif<T>
+where
+    T: Borrow<EspNetif>,
+{
     async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
         Ok(EspMatterNetif::get_conf(self).ok())
     }
@@ -125,7 +126,10 @@ impl<'a> Netif for EspMatterNetif<'a> {
     }
 }
 
-impl<'a> UdpBind for EspMatterNetif<'a> {
+impl<T> UdpBind for EspMatterNetif<T>
+where
+    T: Borrow<EspNetif>,
+{
     type Error = io::Error;
     type Socket<'b> = UdpSocket where Self: 'b;
 

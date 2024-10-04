@@ -101,6 +101,10 @@ async fn matter() -> Result<(), anyhow::Error> {
                 product_name: "ACME Light",
                 vendor_name: "ACME",
             },
+            BasicCommData {
+                password: 20202021,
+                discriminator: 3840,
+            },
             &DEV_ATT,
         ));
 
@@ -163,11 +167,6 @@ async fn matter() -> Result<(), anyhow::Error> {
         // Since we are pretending to use a wired Ethernet connection - yet -
         // we are using a Wifi STA, provide the Wifi netif here
         EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
-        // Hard-coded for demo purposes
-        CommissioningData {
-            verifier: VerifierData::new_with_pw(123456, stack.matter().rand()),
-            discriminator: 250,
-        },
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run

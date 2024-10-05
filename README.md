@@ -232,7 +232,6 @@ const NODE: Node = Node {
 * Setting system time via Matter
 * Matter OTA support based on the ESP IDF OTA API
 * Thread networking (for ESP32H2 and ESP32C6)
-* Wifi Access-Point based commissioning (for ESP32S2 which does not have Bluetooth support)
 
 ## Build Prerequisites
 

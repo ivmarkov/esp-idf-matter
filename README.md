@@ -228,10 +228,10 @@ const NODE: Node = Node {
 
 ## Future
 
+* Thread networking (for ESP32H2 and ESP32C6)
 * Device Attestation data support using secure flash storage
 * Setting system time via Matter
 * Matter OTA support based on the ESP IDF OTA API
-* Thread networking (for ESP32H2 and ESP32C6)
 
 ## Build Prerequisites
 

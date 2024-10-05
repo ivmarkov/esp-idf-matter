@@ -201,17 +201,20 @@ mod wifi {
     use esp_idf_svc::hal::modem::WifiModemPeripheral;
     use esp_idf_svc::hal::peripheral::{Peripheral, PeripheralRef};
     use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
+    use esp_idf_svc::handle::RawHandle;
+    use esp_idf_svc::netif::EspNetif;
     use esp_idf_svc::nvs::EspDefaultNvsPartition;
-    use esp_idf_svc::sys::EspError;
+    use esp_idf_svc::sys::{esp, EspError};
     use esp_idf_svc::timer::EspTaskTimerService;
     use esp_idf_svc::wifi::{AccessPointInfo, AsyncWifi, Capability, Configuration, EspWifi};
 
-    use rs_matter::error::{Error, ErrorCode};
+    use rs_matter::error::Error;
 
     use rs_matter_stack::netif::{Netif, NetifConf, NetifRun};
     use rs_matter_stack::wireless::svc::SvcWifiController;
     use rs_matter_stack::wireless::traits::{Wifi, WifiData, Wireless, NC};
 
+    use crate::error::to_net_error;
     use crate::netif::EspMatterNetif;
 
     use super::EspWirelessMatterStack;
@@ -272,7 +275,16 @@ mod wifi {
         async fn connect(&mut self) -> Result<(), Self::Error> {
             let mut wifi = self.0.lock().await;
 
-            wifi.connect().await
+            wifi.connect().await?;
+
+            // Matter needs an IPv6 address to work
+            esp!(unsafe {
+                esp_idf_svc::sys::esp_netif_create_ip6_linklocal(
+                    wifi.wifi().sta_netif().handle() as _
+                )
+            })?;
+
+            Ok(())
         }
 
         async fn disconnect(&mut self) -> Result<(), Self::Error> {
@@ -318,11 +330,14 @@ mod wifi {
         }
 
         async fn wait_conf_change(&self) -> Result<(), Error> {
-            let wifi = self.0.lock().await;
+            // Wait on any conf change
+            // We anyway cannot lock the wifi mutex here (would be a deadlock), so we just wait for the event
 
-            EspMatterNetif::new(wifi.wifi().sta_netif(), self.1.clone())
-                .wait_conf_change()
+            EspMatterNetif::<EspNetif>::wait_any_conf_change(&self.1)
                 .await
+                .map_err(to_net_error)?;
+
+            Ok(())
         }
     }
 
@@ -394,18 +409,16 @@ mod wifi {
             Self: 'a;
 
         async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
+            let wifi = EspWifi::new(
+                &mut self.modem,
+                self.sysloop.clone(),
+                Some(self.nvs.clone()),
+            )
+            .map_err(to_net_error)?;
+
             let wifi = Arc::new(Mutex::new(
-                AsyncWifi::wrap(
-                    EspWifi::new(
-                        &mut self.modem,
-                        self.sysloop.clone(),
-                        Some(self.nvs.clone()),
-                    )
-                    .map_err(|_| ErrorCode::NoNetworkInterface)?, // TODO
-                    self.sysloop.clone(),
-                    self.timer.clone(),
-                )
-                .map_err(|_| ErrorCode::NoNetworkInterface)?, // TODO
+                AsyncWifi::wrap(wifi, self.sysloop.clone(), self.timer.clone())
+                    .map_err(to_net_error)?,
             ));
 
             Ok((

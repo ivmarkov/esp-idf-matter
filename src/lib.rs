@@ -38,6 +38,7 @@ pub use wireless::*;
     not(esp32s2)
 ))]
 pub mod ble;
+pub mod error;
 #[cfg(all(feature = "std", feature = "rs-matter-stack"))]
 pub mod eth;
 #[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]

@@ -1,4 +1,4 @@
-//! An example utilizing the `EspNCWifiMatterStack` struct.
+//! An example utilizing the `EspWifiNCMatterStack` struct.
 //!
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
 //! (and thus BLE for commissioning), where `NC` stands for non-concurrent commisisoning
@@ -15,7 +15,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, EspMatterBle, EspMatterWifi, EspWifiMatterStack};
+use esp_idf_matter::{init_async_io, EspMatterBle, EspMatterWifi, EspWifiNCMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -51,7 +51,7 @@ fn main() -> Result<(), anyhow::Error> {
     // confused by the low priority of the ESP IDF main task
     // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(55 * 1024)
+        .stack_size(75 * 1024)
         .spawn(|| {
             // Eagerly initialize `async-io` to minimize the risk of stack blowups later on
             init_async_io()?;
@@ -83,7 +83,7 @@ async fn matter() -> Result<(), anyhow::Error> {
     // as we'll run it in this thread
     let stack = MATTER_STACK
         .uninit()
-        .init_with(EspWifiMatterStack::init_default(
+        .init_with(EspWifiNCMatterStack::init_default(
             &BasicInfoConfig {
                 vid: 0xFFF1,
                 pid: 0x8000,
@@ -183,7 +183,7 @@ async fn matter() -> Result<(), anyhow::Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: StaticCell<EspWifiMatterStack<()>> = StaticCell::new();
+static MATTER_STACK: StaticCell<EspWifiNCMatterStack<()>> = StaticCell::new();
 
 static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
@@ -195,7 +195,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EspWifiMatterStack::<()>::root_metadata(),
+        EspWifiNCMatterStack::<()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_types: &[DEV_TYPE_ON_OFF_LIGHT],

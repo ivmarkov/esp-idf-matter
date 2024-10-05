@@ -3,7 +3,7 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 use core::pin::pin;
 
 use alloc::sync::Arc;
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::error::Error;
 
 use std::io;
 
@@ -21,6 +21,8 @@ use esp_idf_svc::sys::{esp, esp_netif_get_ip6_linklocal, EspError, ESP_FAIL};
 
 use rs_matter::utils::sync::Notification;
 use rs_matter_stack::netif::{Netif, NetifConf};
+
+use crate::error::to_net_error;
 
 const TIMEOUT_PERIOD_SECS: u8 = 5;
 
@@ -124,7 +126,7 @@ where
     async fn wait_conf_change(&self) -> Result<(), Error> {
         EspMatterNetif::wait_conf_change(self)
             .await
-            .map_err(|_| ErrorCode::NoNetworkInterface)?; // TODO
+            .map_err(to_net_error)?;
 
         Ok(())
     }

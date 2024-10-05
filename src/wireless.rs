@@ -181,7 +181,10 @@ impl<'a, 'd, T> Ble for EspMatterBle<'a, 'd, T>
 where
     T: BluetoothModemPeripheral,
 {
-    type Peripheral<'t> = EspBtpGattPeripheral<'a, 't, bt::Ble> where Self: 't;
+    type Peripheral<'t>
+        = EspBtpGattPeripheral<'a, 't, bt::Ble>
+    where
+        Self: 't;
 
     async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error> {
         let bt = BtDriver::new(&mut self.modem, Some(self.nvs.clone())).unwrap();
@@ -297,7 +300,10 @@ impl<'a> NetifRun for EspWifiSplit<'a> {
 
 impl<'a> UdpBind for EspWifiSplit<'a> {
     type Error = io::Error;
-    type Socket<'b> = UdpSocket where Self: 'b;
+    type Socket<'b>
+        = UdpSocket
+    where
+        Self: 'b;
 
     async fn bind(&self, local: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
         Stack::new().bind(local).await
@@ -340,9 +346,15 @@ where
 {
     type Data = WifiData;
 
-    type Netif<'a> = EspWifiSplit<'a> where Self: 'a;
+    type Netif<'a>
+        = EspWifiSplit<'a>
+    where
+        Self: 'a;
 
-    type Controller<'a> = SvcWifiController<EspWifiSplit<'a>> where Self: 'a;
+    type Controller<'a>
+        = SvcWifiController<EspWifiSplit<'a>>
+    where
+        Self: 'a;
 
     async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
         let wifi = Arc::new(Mutex::new(

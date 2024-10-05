@@ -135,7 +135,10 @@ where
     T: Borrow<EspNetif>,
 {
     type Error = io::Error;
-    type Socket<'b> = UdpSocket where Self: 'b;
+    type Socket<'b>
+        = UdpSocket
+    where
+        Self: 'b;
 
     async fn bind(&self, local: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
         Stack::new().bind(local).await

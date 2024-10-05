@@ -19,10 +19,15 @@ Since ESP-IDF does support the Rust Standard Library, UDP networking just works.
 (See also [All examples](#all-examples))
 
 ```rust
-//! An example utilizing the `EspWifiBleMatterStack` struct.
+//! An example utilizing the `EspNCWifiMatterStack` struct.
+//!
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
-//! and BLE for commissioning.
+//! (and thus BLE for commissioning), where `NC` stands for non-concurrent commisisoning
+//! (i.e., the stack will not run the BLE and Wifi radio simultaneously, which saves memory).
+//!
 //! If you want to use Ethernet, utilize `EspEthMatterStack` instead.
+//! If you want to use concurrent commissioning, utilize `EspWifiMatterStack` instead
+//! (Alexa does not work (yet) with non-concurrent commissioning).
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 
@@ -31,7 +36,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{init_async_io, EspKvBlobStore, EspModem, EspPersist, EspWifiBleMatterStack};
+use esp_idf_matter::{init_async_io, EspMatterBle, EspMatterWifi, EspWifiMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -47,11 +52,10 @@ use rs_matter::data_model::cluster_on_off;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
-use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::CommissioningData;
 
+use rs_matter::BasicCommData;
 use rs_matter_stack::persist::DummyPersist;
 
 use static_cell::StaticCell;
@@ -68,7 +72,7 @@ fn main() -> Result<(), anyhow::Error> {
     // confused by the low priority of the ESP IDF main task
     // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(70 * 1024)
+        .stack_size(55 * 1024)
         .spawn(|| {
             // Eagerly initialize `async-io` to minimize the risk of stack blowups later on
             init_async_io()?;
@@ -100,7 +104,7 @@ async fn matter() -> Result<(), anyhow::Error> {
     // as we'll run it in this thread
     let stack = MATTER_STACK
         .uninit()
-        .init_with(EspWifiBleMatterStack::init_default(
+        .init_with(EspWifiMatterStack::init_default(
             &BasicInfoConfig {
                 vid: 0xFFF1,
                 pid: 0x8000,
@@ -111,6 +115,10 @@ async fn matter() -> Result<(), anyhow::Error> {
                 device_name: "MyLight",
                 product_name: "ACME Light",
                 vendor_name: "ACME",
+            },
+            BasicCommData {
+                password: 20202021,
+                discriminator: 3840,
             },
             &DEV_ATT,
         ));
@@ -145,25 +153,21 @@ async fn matter() -> Result<(), anyhow::Error> {
             ))),
         );
 
+    let (mut wifi_modem, mut bt_modem) = peripherals.modem.split();
+
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
+        // The Matter stack needs the Wifi modem peripheral
+        EspMatterWifi::new(&mut wifi_modem, sysloop, timers, nvs.clone()),
+        // The Matter stack needs the BT modem peripheral
+        EspMatterBle::new(&mut bt_modem, nvs, stack),
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`
         DummyPersist,
         //EspPersist::new_wifi_ble(EspKvBlobStore::new_default(nvs.clone())?, stack),
-        // The Matter stack needs the BT/Wifi modem peripheral - and in general -
-        // the Bluetooth / Wifi connections will be managed by the Matter stack itself
-        // For finer-grained control, call `MatterStack::is_commissioned`,
-        // `MatterStack::commission` and `MatterStack::operate`
-        EspModem::new(peripherals.modem, sysloop, timers, nvs, stack),
-        // Hard-coded for demo purposes
-        CommissioningData {
-            verifier: VerifierData::new_with_pw(123456, stack.matter().rand()),
-            discriminator: 250,
-        },
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -200,7 +204,7 @@ async fn matter() -> Result<(), anyhow::Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: StaticCell<EspWifiBleMatterStack<()>> = StaticCell::new();
+static MATTER_STACK: StaticCell<EspWifiMatterStack<()>> = StaticCell::new();
 
 static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
@@ -212,10 +216,10 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EspWifiBleMatterStack::<()>::root_metadata(),
+        EspWifiMatterStack::<()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
         },
     ],

@@ -7,7 +7,7 @@ use edge_nal_std::{Stack, UdpSocket};
 
 use embassy_sync::mutex::Mutex;
 
-use embedded_svc::wifi::asynch::Wifi;
+use embedded_svc::wifi::asynch::Wifi as WifiSvc;
 
 use enumset::EnumSet;
 
@@ -31,7 +31,7 @@ use rs_matter_stack::network::{Embedding, Network};
 use rs_matter_stack::persist::KvBlobBuf;
 use rs_matter_stack::wireless::svc::SvcWifiController;
 use rs_matter_stack::wireless::traits::{
-    Ble, ThreadCredentials, WifiCredentials, WifiData, Wireless, WirelessConfig, WirelessData,
+    Ble, Thread, Wifi, WifiData, Wireless, WirelessConfig, WirelessData, NC,
 };
 use rs_matter_stack::{MatterStack, WirelessBle};
 
@@ -39,18 +39,45 @@ use crate::ble::{EspBtpGattContext, EspBtpGattPeripheral};
 
 use super::netif::EspMatterNetif;
 
-pub type EspWifiMatterStack<'a, E> = EspWirelessMatterStack<'a, WifiCredentials, E>;
-pub type EspThreadMatterStack<'a, E> = EspWirelessMatterStack<'a, ThreadCredentials, E>;
+/// A type alias for an ESP-IDF Matter stack running over Wifi (and BLE, during commissioning).
+pub type EspWifiMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi, E>;
 
+/// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
+pub type EspThreadMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread, E>;
+
+/// A type alias for an ESP-IDF Matter stack running over Wifi (and BLE, during commissioning).
+///
+/// Unlike `EspWifiMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
+/// where the device runs either BLE or Wifi, but not both at the same time.
+///
+/// This is useful to save memory by only having one of the stacks active at any point in time.
+///
+/// Note that Alexa does not (yet) work with non-concurrent commissioning.
+pub type EspWifiNCMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi<NC>, E>;
+
+/// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
+///
+/// Unlike `EspThreadMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
+/// where the device runs either BLE or Thread, but not both at the same time.
+///
+/// This is useful to save memory by only having one of the stacks active at any point in time.
+///
+/// Note that Alexa does not (yet) work with non-concurrent commissioning.
+pub type EspThreadNCMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread<NC>, E>;
+
+/// A type alias for an ESP-IDF Matter stack running over a wireless network (Wifi or Thread) and BLE.
 pub type EspWirelessMatterStack<'a, T, E> = MatterStack<'a, EspWirelessBle<T, E>>;
+
+/// A type alias for an ESP-IDF implementation of the `Network` trait for a Matter stack running over
+/// BLE during commissioning, and then over either WiFi or Thread when operating.
 pub type EspWirelessBle<T, E> = WirelessBle<EspRawMutex, T, KvBlobBuf<EspGatt<E>>>;
 
-/// An embedding of the ESP IDF Bluedroid Gatt peripheral context for the `WifiBle` network type from `rs-matter-stack`.
+/// An embedding of the ESP IDF Bluedroid Gatt peripheral context for the `WirelessBle` network type from `rs-matter-stack`.
 /// Allows the memory of this context to be statically allocated and cost-initialized.
 ///
 /// Usage:
 /// ```no_run
-/// MatterStack<WifiBle<EspGatt<E>>>::new();
+/// MatterStack<WirelessBle<EspRawMutex, Wifi, KvBlobBuf<EspGatt<E>>>>::new(...);
 /// ```
 ///
 /// ... where `E` can be a next-level, user-supplied embedding or just `()` if the user does not need to embed anything.
@@ -105,7 +132,7 @@ where
 
 const GATTS_APP_ID: u16 = 0;
 
-/// A `Ble` trait implementation
+/// A `Ble` trait implementation via ESP-IDF
 pub struct EspMatterBle<'a, 'd, T> {
     context: &'a EspBtpGattContext,
     modem: PeripheralRef<'d, T>,
@@ -172,7 +199,7 @@ pub struct EspWifiSplit<'a>(
     EspSystemEventLoop,
 );
 
-impl<'a> Wifi for EspWifiSplit<'a> {
+impl<'a> WifiSvc for EspWifiSplit<'a> {
     type Error = EspError;
 
     async fn get_capabilities(&self) -> Result<EnumSet<Capability>, Self::Error> {
@@ -277,6 +304,7 @@ impl<'a> UdpBind for EspWifiSplit<'a> {
     }
 }
 
+/// A `Wireless` trait implementation via ESP-IDF's Wifi modem
 pub struct EspMatterWifi<'d, T> {
     modem: PeripheralRef<'d, T>,
     sysloop: EspSystemEventLoop,
@@ -288,7 +316,7 @@ impl<'d, T> EspMatterWifi<'d, T>
 where
     T: WifiModemPeripheral,
 {
-    /// Create a new instance of the `EspBle` type.
+    /// Create a new instance of the `EspMatterWifi` type.
     pub fn new(
         modem: impl Peripheral<P = T> + 'd,
         sysloop: EspSystemEventLoop,

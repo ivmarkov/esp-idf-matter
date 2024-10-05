@@ -24,6 +24,7 @@ use rs_matter_stack::netif::{Netif, NetifConf};
 
 const TIMEOUT_PERIOD_SECS: u8 = 5;
 
+/// A `Netif` and `UdpBind` traits implementation via ESP-IDF
 pub struct EspMatterNetif<T> {
     netif: T,
     sysloop: EspSystemEventLoop,
@@ -33,6 +34,7 @@ impl<T> EspMatterNetif<T>
 where
     T: Borrow<EspNetif>,
 {
+    /// Create a new `EspMatterNetif` instance
     pub const fn new(netif: T, sysloop: EspSystemEventLoop) -> Self {
         Self { netif, sysloop }
     }
@@ -45,6 +47,7 @@ where
         Self::wait_any_conf_change(&self.sysloop).await
     }
 
+    /// Get the network interface configuration
     pub fn get_netif_conf(netif: &EspNetif) -> Result<NetifConf, EspError> {
         let ip_info = netif.get_ip_info()?;
 
@@ -89,6 +92,7 @@ where
         })
     }
 
+    /// Wait for any IP configuration change
     pub async fn wait_any_conf_change(sysloop: &EspSystemEventLoop) -> Result<(), EspError> {
         let notification = Arc::new(Notification::<EspRawMutex>::new());
 

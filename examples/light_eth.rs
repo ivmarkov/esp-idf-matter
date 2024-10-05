@@ -12,9 +12,8 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{
-    init_async_io, EspEthMatterStack, EspKvBlobStore, EspMatterNetif, EspPersist,
-};
+use esp_idf_matter::netif::EspMatterNetif;
+use esp_idf_matter::{init_async_io, EspEthMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -33,11 +32,10 @@ use rs_matter::data_model::cluster_on_off;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
-use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::CommissioningData;
 
+use rs_matter::BasicCommData;
 use rs_matter_stack::persist::DummyPersist;
 
 use static_cell::StaticCell;
@@ -158,15 +156,15 @@ async fn matter() -> Result<(), anyhow::Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
+        // The Matter stack need access to the netif on which we'll operate
+        // Since we are pretending to use a wired Ethernet connection - yet -
+        // we are using a Wifi STA, provide the Wifi netif here
+        EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`
         DummyPersist,
         //EspPersist::new_eth(EspKvBlobStore::new_default(nvs.clone())?, stack),
-        // The Matter stack need access to the netif on which we'll operate
-        // Since we are pretending to use a wired Ethernet connection - yet -
-        // we are using a Wifi STA, provide the Wifi netif here
-        EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -217,7 +215,7 @@ const NODE: Node = Node {
         EspEthMatterStack::<()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
         },
     ],

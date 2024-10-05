@@ -98,7 +98,7 @@ impl IndBuffer {
     }
 }
 
-/// The `'static` state of the `BtpGattPeripheral` struct.
+/// The `'static` state of the `EspBtpGattPeripheral` struct.
 /// Isolated as a separate struct to allow for `const fn` construction
 /// and static allocation.
 pub struct EspBtpGattContext {
@@ -165,7 +165,7 @@ impl Default for EspBtpGattContext {
     }
 }
 
-/// A GATT peripheral implementation for the BTP protocol in `rs-matter`.
+/// A GATT peripheral implementation for the BTP protocol in `rs-matter` via ESP-IDF.
 /// Implements the `GattPeripheral` trait.
 pub struct EspBtpGattPeripheral<'a, 'd, M>
 where

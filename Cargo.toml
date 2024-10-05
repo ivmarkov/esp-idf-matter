@@ -18,8 +18,8 @@ rust-version = "1.78"
 
 #[patch.'https://github.com/ivmarkov/async-io-mini']
 #async-io-mini = { path = "../async-io-mini" }
-[patch.'https://github.com/ivmarkov/rs-matter-stack']
-rs-matter-stack = { path = "../rs-matter-stack" }
+#[patch.'https://github.com/ivmarkov/rs-matter-stack']
+#rs-matter-stack = { path = "../rs-matter-stack" }
 
 [patch.crates-io]
 rs-matter = { git = "https://github.com/ivmarkov/rs-matter" }
@@ -55,7 +55,7 @@ esp-idf-svc = { version = "0.49.1", default-features = false, features = ["alloc
 embedded-svc = { version = "0.28", default-features = false }
 rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
 async-io = { version = "=2.0.0", default-features = false } # Workaround for https://github.com/smol-rs/async-lock/issues/84
-rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", branch = "in-place-init", default-features = false, features = ["std"], optional = true }
+rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", branch = "thread", default-features = false, features = ["std"], optional = true }
 edge-nal = "0.3"
 edge-nal-std = { version = "0.3", default-features = false, optional = true }
 

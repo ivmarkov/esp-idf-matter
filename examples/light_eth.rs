@@ -12,9 +12,8 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
-use esp_idf_matter::{
-    init_async_io, EspEthMatterStack, EspKvBlobStore, EspMatterNetif, EspPersist,
-};
+use esp_idf_matter::netif::EspMatterNetif;
+use esp_idf_matter::{init_async_io, EspEthMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -33,13 +32,13 @@ use rs_matter::data_model::cluster_on_off;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
-use rs_matter::secure_channel::spake2p::VerifierData;
+use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::CommissioningData;
 
+use rs_matter::BasicCommData;
 use rs_matter_stack::persist::DummyPersist;
 
-use static_cell::ConstStaticCell;
+use static_cell::StaticCell;
 
 #[path = "dev_att/dev_att.rs"]
 mod dev_att;
@@ -56,7 +55,7 @@ fn main() -> Result<(), anyhow::Error> {
     // confused by the low priority of the ESP IDF main task
     // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(65 * 1024)
+        .stack_size(60 * 1024)
         .spawn(|| {
             // Eagerly initialize `async-io` to minimize the risk of stack blowups later on
             init_async_io()?;
@@ -84,9 +83,28 @@ fn run() -> Result<(), anyhow::Error> {
 }
 
 async fn matter() -> Result<(), anyhow::Error> {
-    // Take the Matter stack (can be done only once),
+    // Initialize the Matter stack (can be done only once),
     // as we'll run it in this thread
-    let stack = MATTER_STACK.take();
+    let stack = MATTER_STACK
+        .uninit()
+        .init_with(EspEthMatterStack::init_default(
+            &BasicInfoConfig {
+                vid: 0xFFF1,
+                pid: 0x8000,
+                hw_ver: 2,
+                sw_ver: 1,
+                sw_ver_str: "1",
+                serial_no: "aabbccdd",
+                device_name: "MyLight",
+                product_name: "ACME Light",
+                vendor_name: "ACME",
+            },
+            BasicCommData {
+                password: 20202021,
+                discriminator: 3840,
+            },
+            &DEV_ATT,
+        ));
 
     // Take some generic ESP-IDF stuff we'll need later
     let sysloop = EspSystemEventLoop::take()?;
@@ -138,20 +156,15 @@ async fn matter() -> Result<(), anyhow::Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
+        // The Matter stack need access to the netif on which we'll operate
+        // Since we are pretending to use a wired Ethernet connection - yet -
+        // we are using a Wifi STA, provide the Wifi netif here
+        EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`
         DummyPersist,
         //EspPersist::new_eth(EspKvBlobStore::new_default(nvs.clone())?, stack),
-        // The Matter stack need access to the netif on which we'll operate
-        // Since we are pretending to use a wired Ethernet connection - yet -
-        // we are using a Wifi STA, provide the Wifi netif here
-        EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
-        // Hard-coded for demo purposes
-        CommissioningData {
-            verifier: VerifierData::new_with_pw(123456, stack.matter().rand()),
-            discriminator: 250,
-        },
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -187,21 +200,9 @@ async fn matter() -> Result<(), anyhow::Error> {
 
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
-static MATTER_STACK: ConstStaticCell<EspEthMatterStack<()>> =
-    ConstStaticCell::new(EspEthMatterStack::new_default(
-        &BasicInfoConfig {
-            vid: 0xFFF1,
-            pid: 0x8000,
-            hw_ver: 2,
-            sw_ver: 1,
-            sw_ver_str: "1",
-            serial_no: "aabbccdd",
-            device_name: "MyLight",
-            product_name: "ACME Light",
-            vendor_name: "ACME",
-        },
-        &dev_att::HardCodedDevAtt::new(),
-    ));
+static MATTER_STACK: StaticCell<EspEthMatterStack<()>> = StaticCell::new();
+
+static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1
@@ -214,7 +215,7 @@ const NODE: Node = Node {
         EspEthMatterStack::<()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
         },
     ],

@@ -1,16 +1,6 @@
-#![cfg(all(
-    not(esp_idf_btdm_ctrl_mode_br_edr_only),
-    esp_idf_bt_enabled,
-    esp_idf_bt_bluedroid_enabled,
-    not(esp32s2)
-))]
-
 use core::borrow::Borrow;
-use core::cell::RefCell;
 
 use alloc::borrow::ToOwned;
-
-use embassy_sync::blocking_mutex::Mutex;
 
 use enumset::enum_set;
 
@@ -32,8 +22,10 @@ use rs_matter::transport::network::btp::{
     C2_CHARACTERISTIC_UUID, C2_MAX_LEN, MATTER_BLE_SERVICE_UUID16, MAX_BTP_SESSIONS,
 };
 use rs_matter::transport::network::BtAddr;
-use rs_matter::utils::ifmutex::IfMutex;
-use rs_matter::utils::signal::Signal;
+use rs_matter::utils::cell::RefCell;
+use rs_matter::utils::init::{init, Init};
+use rs_matter::utils::sync::blocking::Mutex;
+use rs_matter::utils::sync::{IfMutex, Signal};
 
 const MAX_CONNECTIONS: usize = MAX_BTP_SESSIONS;
 const MAX_MTU_SIZE: usize = 512;
@@ -52,46 +44,89 @@ struct State {
     c1_handle: Option<Handle>,
     c2_handle: Option<Handle>,
     c2_cccd_handle: Option<Handle>,
-    connections: heapless::Vec<Connection, MAX_CONNECTIONS>,
+    connections: rs_matter::utils::storage::Vec<Connection, MAX_CONNECTIONS>,
     response: GattResponse,
+}
+
+impl State {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            gatt_if: None,
+            service_handle: None,
+            c1_handle: None,
+            c2_handle: None,
+            c2_cccd_handle: None,
+            connections: rs_matter::utils::storage::Vec::new(),
+            response: GattResponse::new(),
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            gatt_if: None,
+            service_handle: None,
+            c1_handle: None,
+            c2_handle: None,
+            c2_cccd_handle: None,
+            connections <- rs_matter::utils::storage::Vec::init(),
+            response <- gatt_response::init(),
+        })
+    }
 }
 
 #[derive(Debug)]
 struct IndBuffer {
     addr: BtAddr,
-    data: heapless::Vec<u8, MAX_MTU_SIZE>,
+    data: rs_matter::utils::storage::Vec<u8, MAX_MTU_SIZE>,
 }
 
-/// The `'static` state of the `BtpGattPeripheral` struct.
+impl IndBuffer {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            addr: BtAddr([0; 6]),
+            data: rs_matter::utils::storage::Vec::new(),
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            addr: BtAddr([0; 6]),
+            data <- rs_matter::utils::storage::Vec::init(),
+        })
+    }
+}
+
+/// The `'static` state of the `EspBtpGattPeripheral` struct.
 /// Isolated as a separate struct to allow for `const fn` construction
 /// and static allocation.
-pub struct BtpGattContext {
+pub struct EspBtpGattContext {
     state: Mutex<EspRawMutex, RefCell<State>>,
     ind: IfMutex<EspRawMutex, IndBuffer>,
     ind_in_flight: Signal<EspRawMutex, bool>,
 }
 
-impl BtpGattContext {
+impl EspBtpGattContext {
     /// Create a new instance.
     #[allow(clippy::large_stack_frames)]
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(State {
-                gatt_if: None,
-                service_handle: None,
-                c1_handle: None,
-                c2_handle: None,
-                c2_cccd_handle: None,
-                connections: heapless::Vec::new(),
-                response: GattResponse::new(),
-            })),
-            ind: IfMutex::new(IndBuffer {
-                addr: BtAddr([0; 6]),
-                data: heapless::Vec::new(),
-            }),
+            state: Mutex::new(RefCell::new(State::new())),
+            ind: IfMutex::new(IndBuffer::new()),
             ind_in_flight: Signal::new(false),
         }
+    }
+
+    /// Return an in-place initializer for `EspBtpGattContext`.
+    #[allow(clippy::large_stack_frames)]
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            state <- Mutex::init(RefCell::init(State::init())),
+            ind <- IfMutex::init(IndBuffer::init()),
+            ind_in_flight: Signal::new(false),
+        })
     }
 
     pub(crate) fn reset(&self) -> Result<(), EspError> {
@@ -121,7 +156,7 @@ impl BtpGattContext {
     }
 }
 
-impl Default for BtpGattContext {
+impl Default for EspBtpGattContext {
     // TODO
     #[allow(clippy::large_stack_frames)]
     #[inline(always)]
@@ -130,18 +165,18 @@ impl Default for BtpGattContext {
     }
 }
 
-/// A GATT peripheral implementation for the BTP protocol in `rs-matter`.
+/// A GATT peripheral implementation for the BTP protocol in `rs-matter` via ESP-IDF.
 /// Implements the `GattPeripheral` trait.
-pub struct BtpGattPeripheral<'a, 'd, M>
+pub struct EspBtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,
 {
     app_id: u16,
     driver: BtDriver<'d, M>,
-    context: &'a BtpGattContext,
+    context: &'a EspBtpGattContext,
 }
 
-impl<'a, 'd, M> BtpGattPeripheral<'a, 'd, M>
+impl<'a, 'd, M> EspBtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,
 {
@@ -152,7 +187,7 @@ where
     pub fn new(
         app_id: u16,
         driver: BtDriver<'d, M>,
-        context: &'a BtpGattContext,
+        context: &'a EspBtpGattContext,
     ) -> Result<Self, EspError> {
         context.reset()?;
 
@@ -258,7 +293,7 @@ where
     }
 }
 
-impl<'a, 'd, M> GattPeripheral for BtpGattPeripheral<'a, 'd, M>
+impl<'a, 'd, M> GattPeripheral for EspBtpGattPeripheral<'a, 'd, M>
 where
     M: BleEnabled,
 {
@@ -271,7 +306,7 @@ where
     where
         F: FnMut(GattPeripheralEvent) + Send + Clone + 'static,
     {
-        BtpGattPeripheral::run(self, service_name, adv_data, callback)
+        EspBtpGattPeripheral::run(self, service_name, adv_data, callback)
             .await
             .map_err(|_| ErrorCode::BtpError)?;
 
@@ -279,7 +314,7 @@ where
     }
 
     async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), rs_matter::error::Error> {
-        BtpGattPeripheral::indicate(self, data, address)
+        EspBtpGattPeripheral::indicate(self, data, address)
             .await
             .map_err(|_| ErrorCode::BtpError)?;
 
@@ -295,7 +330,7 @@ where
     app_id: u16,
     gap: &'a EspBleGap<'d, M, T>,
     gatts: &'a EspGatts<'d, M, T>,
-    ctx: &'a BtpGattContext,
+    ctx: &'a EspBtpGattContext,
 }
 
 impl<'a, 'd, M, T> GattExecContext<'a, 'd, M, T>
@@ -307,7 +342,7 @@ where
         app_id: u16,
         gap: &'a EspBleGap<'d, M, T>,
         gatts: &'a EspGatts<'d, M, T>,
-        ctx: &'a BtpGattContext,
+        ctx: &'a EspBtpGattContext,
     ) -> Self {
         Self {
             app_id,
@@ -802,5 +837,38 @@ where
         }
 
         Ok(())
+    }
+}
+
+mod gatt_response {
+    use esp_idf_svc::bt::ble::gatt::GattResponse;
+    use esp_idf_svc::sys::{esp_gatt_rsp_t, esp_gatt_value_t};
+
+    use rs_matter::utils::init::{init, init_from_closure, zeroed, Init};
+
+    /// Return an in-place initializer for `GattResponse`.
+    ///
+    /// Works by initializing the `GattResponse` struct in-place using the `esp_gatt_rsp_t` type,
+    /// which is possible because `GattResponse` is a `#[repr(transparent)]` newtype over `esp_gatt_rsp_t`.
+    pub fn init() -> impl Init<GattResponse> {
+        unsafe {
+            init_from_closure(|slot: *mut GattResponse| {
+                let slot = slot as *mut esp_gatt_rsp_t;
+
+                init_esp_gatt_response().__init(slot)
+            })
+        }
+    }
+
+    fn init_esp_gatt_response() -> impl Init<esp_gatt_rsp_t> {
+        init!(esp_gatt_rsp_t {
+           attr_value <- init!(esp_gatt_value_t {
+               len: 0,
+               value <- zeroed(),
+               handle: 0,
+               offset: 0,
+               auth_req: 0,
+           }),
+        })
     }
 }

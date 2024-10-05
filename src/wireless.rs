@@ -73,6 +73,7 @@ pub type EspWirelessMatterStack<'a, T, E> = MatterStack<'a, EspWirelessBle<T, E>
 pub type EspWirelessBle<T, E> = WirelessBle<EspRawMutex, T, KvBlobBuf<EspGatt<E>>>;
 
 /// An embedding of the ESP IDF Bluedroid Gatt peripheral context for the `WirelessBle` network type from `rs-matter-stack`.
+///
 /// Allows the memory of this context to be statically allocated and cost-initialized.
 ///
 /// Usage:

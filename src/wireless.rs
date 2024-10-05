@@ -1,69 +1,30 @@
-use std::io;
-
-use alloc::sync::Arc;
-
-use edge_nal::UdpBind;
-use edge_nal_std::{Stack, UdpSocket};
-
-use embassy_sync::mutex::Mutex;
-
-use embedded_svc::wifi::asynch::Wifi as WifiSvc;
-
-use enumset::EnumSet;
-
 use esp_idf_svc::bt::{self, BtDriver};
-use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::into_ref;
-use esp_idf_svc::hal::modem::{BluetoothModemPeripheral, WifiModemPeripheral};
+use esp_idf_svc::hal::modem::BluetoothModemPeripheral;
 use esp_idf_svc::hal::peripheral::{Peripheral, PeripheralRef};
 use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::sys::EspError;
-use esp_idf_svc::timer::EspTaskTimerService;
-use esp_idf_svc::wifi::{AccessPointInfo, AsyncWifi, Capability, Configuration, EspWifi};
 
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::error::Error;
 use rs_matter::tlv::{FromTLV, ToTLV};
 use rs_matter::utils::init::{init, Init};
 
-use rs_matter_stack::netif::{Netif, NetifConf, NetifRun};
 use rs_matter_stack::network::{Embedding, Network};
 use rs_matter_stack::persist::KvBlobBuf;
-use rs_matter_stack::wireless::svc::SvcWifiController;
-use rs_matter_stack::wireless::traits::{
-    Ble, Thread, Wifi, WifiData, Wireless, WirelessConfig, WirelessData, NC,
-};
+use rs_matter_stack::wireless::traits::{Ble, WirelessConfig, WirelessData};
 use rs_matter_stack::{MatterStack, WirelessBle};
 
 use crate::ble::{EspBtpGattContext, EspBtpGattPeripheral};
 
-use super::netif::EspMatterNetif;
+#[cfg(all(
+    esp_idf_comp_openthread_enabled,
+    esp_idf_openthread_enabled,
+    esp_idf_comp_vfs_enabled,
+))]
+pub use thread::*;
 
-/// A type alias for an ESP-IDF Matter stack running over Wifi (and BLE, during commissioning).
-pub type EspWifiMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi, E>;
-
-/// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
-pub type EspThreadMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread, E>;
-
-/// A type alias for an ESP-IDF Matter stack running over Wifi (and BLE, during commissioning).
-///
-/// Unlike `EspWifiMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
-/// where the device runs either BLE or Wifi, but not both at the same time.
-///
-/// This is useful to save memory by only having one of the stacks active at any point in time.
-///
-/// Note that Alexa does not (yet) work with non-concurrent commissioning.
-pub type EspWifiNCMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi<NC>, E>;
-
-/// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
-///
-/// Unlike `EspThreadMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
-/// where the device runs either BLE or Thread, but not both at the same time.
-///
-/// This is useful to save memory by only having one of the stacks active at any point in time.
-///
-/// Note that Alexa does not (yet) work with non-concurrent commissioning.
-pub type EspThreadNCMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread<NC>, E>;
+#[cfg(esp_idf_comp_esp_wifi_enabled)]
+pub use wifi::*;
 
 /// A type alias for an ESP-IDF Matter stack running over a wireless network (Wifi or Thread) and BLE.
 pub type EspWirelessMatterStack<'a, T, E> = MatterStack<'a, EspWirelessBle<T, E>>;
@@ -196,185 +157,261 @@ where
     }
 }
 
-/// The relation between a network interface and a controller is slightly different
-/// in the ESP-IDF crates compared to what `rs-matter-stack` wants, hence we need this helper type.
-pub struct EspWifiSplit<'a>(
-    Arc<Mutex<EspRawMutex, AsyncWifi<EspWifi<'a>>>>,
-    EspSystemEventLoop,
-);
+#[cfg(all(
+    esp_idf_comp_openthread_enabled,
+    esp_idf_openthread_enabled,
+    esp_idf_comp_vfs_enabled,
+))]
+mod thread {
+    use rs_matter_stack::wireless::traits::{Thread, NC};
 
-impl<'a> WifiSvc for EspWifiSplit<'a> {
-    type Error = EspError;
+    use super::EspWirelessMatterStack;
 
-    async fn get_capabilities(&self) -> Result<EnumSet<Capability>, Self::Error> {
-        let wifi = self.0.lock().await;
+    /// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
+    pub type EspThreadMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread, E>;
 
-        wifi.get_capabilities()
-    }
-
-    async fn get_configuration(&self) -> Result<Configuration, Self::Error> {
-        let wifi = self.0.lock().await;
-
-        wifi.get_configuration()
-    }
-
-    async fn set_configuration(&mut self, conf: &Configuration) -> Result<(), Self::Error> {
-        let mut wifi = self.0.lock().await;
-
-        wifi.set_configuration(conf)
-    }
-
-    async fn start(&mut self) -> Result<(), Self::Error> {
-        let mut wifi = self.0.lock().await;
-
-        wifi.start().await
-    }
-
-    async fn stop(&mut self) -> Result<(), Self::Error> {
-        let mut wifi = self.0.lock().await;
-
-        wifi.stop().await
-    }
-
-    async fn connect(&mut self) -> Result<(), Self::Error> {
-        let mut wifi = self.0.lock().await;
-
-        wifi.connect().await
-    }
-
-    async fn disconnect(&mut self) -> Result<(), Self::Error> {
-        let mut wifi = self.0.lock().await;
-
-        wifi.disconnect().await
-    }
-
-    async fn is_started(&self) -> Result<bool, Self::Error> {
-        let wifi = self.0.lock().await;
-
-        wifi.is_started()
-    }
-
-    async fn is_connected(&self) -> Result<bool, Self::Error> {
-        let wifi = self.0.lock().await;
-
-        wifi.is_connected()
-    }
-
-    async fn scan_n<const N: usize>(
-        &mut self,
-    ) -> Result<(heapless::Vec<AccessPointInfo, N>, usize), Self::Error> {
-        let mut wifi = self.0.lock().await;
-
-        wifi.scan_n().await
-    }
-
-    async fn scan(&mut self) -> Result<alloc::vec::Vec<AccessPointInfo>, Self::Error> {
-        let mut wifi = self.0.lock().await;
-
-        wifi.scan().await
-    }
+    /// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
+    ///
+    /// Unlike `EspThreadMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
+    /// where the device runs either BLE or Thread, but not both at the same time.
+    ///
+    /// This is useful to save memory by only having one of the stacks active at any point in time.
+    ///
+    /// Note that Alexa does not (yet) work with non-concurrent commissioning.
+    pub type EspThreadNCMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread<NC>, E>;
 }
 
-impl<'a> Netif for EspWifiSplit<'a> {
-    async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
-        let wifi = self.0.lock().await;
+#[cfg(esp_idf_comp_esp_wifi_enabled)]
+mod wifi {
+    use std::io;
 
-        EspMatterNetif::new(wifi.wifi().sta_netif(), self.1.clone())
-            .get_conf()
-            .await
+    use alloc::sync::Arc;
+
+    use edge_nal::UdpBind;
+    use edge_nal_std::{Stack, UdpSocket};
+
+    use embassy_sync::mutex::Mutex;
+
+    use embedded_svc::wifi::asynch::Wifi as WifiSvc;
+
+    use enumset::EnumSet;
+
+    use esp_idf_svc::eventloop::EspSystemEventLoop;
+    use esp_idf_svc::hal::into_ref;
+    use esp_idf_svc::hal::modem::WifiModemPeripheral;
+    use esp_idf_svc::hal::peripheral::{Peripheral, PeripheralRef};
+    use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
+    use esp_idf_svc::nvs::EspDefaultNvsPartition;
+    use esp_idf_svc::sys::EspError;
+    use esp_idf_svc::timer::EspTaskTimerService;
+    use esp_idf_svc::wifi::{AccessPointInfo, AsyncWifi, Capability, Configuration, EspWifi};
+
+    use rs_matter::error::{Error, ErrorCode};
+
+    use rs_matter_stack::netif::{Netif, NetifConf, NetifRun};
+    use rs_matter_stack::wireless::svc::SvcWifiController;
+    use rs_matter_stack::wireless::traits::{Wifi, WifiData, Wireless, NC};
+
+    use crate::netif::EspMatterNetif;
+
+    use super::EspWirelessMatterStack;
+
+    /// A type alias for an ESP-IDF Matter stack running over Wifi (and BLE, during commissioning).
+    pub type EspWifiMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi, E>;
+
+    /// A type alias for an ESP-IDF Matter stack running over Wifi (and BLE, during commissioning).
+    ///
+    /// Unlike `EspWifiMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
+    /// where the device runs either BLE or Wifi, but not both at the same time.
+    ///
+    /// This is useful to save memory by only having one of the stacks active at any point in time.
+    ///
+    /// Note that Alexa does not (yet) work with non-concurrent commissioning.
+    pub type EspWifiNCMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi<NC>, E>;
+
+    /// The relation between a network interface and a controller is slightly different
+    /// in the ESP-IDF crates compared to what `rs-matter-stack` wants, hence we need this helper type.
+    pub struct EspWifiSplit<'a>(
+        Arc<Mutex<EspRawMutex, AsyncWifi<EspWifi<'a>>>>,
+        EspSystemEventLoop,
+    );
+
+    impl<'a> WifiSvc for EspWifiSplit<'a> {
+        type Error = EspError;
+
+        async fn get_capabilities(&self) -> Result<EnumSet<Capability>, Self::Error> {
+            let wifi = self.0.lock().await;
+
+            wifi.get_capabilities()
+        }
+
+        async fn get_configuration(&self) -> Result<Configuration, Self::Error> {
+            let wifi = self.0.lock().await;
+
+            wifi.get_configuration()
+        }
+
+        async fn set_configuration(&mut self, conf: &Configuration) -> Result<(), Self::Error> {
+            let mut wifi = self.0.lock().await;
+
+            wifi.set_configuration(conf)
+        }
+
+        async fn start(&mut self) -> Result<(), Self::Error> {
+            let mut wifi = self.0.lock().await;
+
+            wifi.start().await
+        }
+
+        async fn stop(&mut self) -> Result<(), Self::Error> {
+            let mut wifi = self.0.lock().await;
+
+            wifi.stop().await
+        }
+
+        async fn connect(&mut self) -> Result<(), Self::Error> {
+            let mut wifi = self.0.lock().await;
+
+            wifi.connect().await
+        }
+
+        async fn disconnect(&mut self) -> Result<(), Self::Error> {
+            let mut wifi = self.0.lock().await;
+
+            wifi.disconnect().await
+        }
+
+        async fn is_started(&self) -> Result<bool, Self::Error> {
+            let wifi = self.0.lock().await;
+
+            wifi.is_started()
+        }
+
+        async fn is_connected(&self) -> Result<bool, Self::Error> {
+            let wifi = self.0.lock().await;
+
+            wifi.is_connected()
+        }
+
+        async fn scan_n<const N: usize>(
+            &mut self,
+        ) -> Result<(heapless::Vec<AccessPointInfo, N>, usize), Self::Error> {
+            let mut wifi = self.0.lock().await;
+
+            wifi.scan_n().await
+        }
+
+        async fn scan(&mut self) -> Result<alloc::vec::Vec<AccessPointInfo>, Self::Error> {
+            let mut wifi = self.0.lock().await;
+
+            wifi.scan().await
+        }
     }
 
-    async fn wait_conf_change(&self) -> Result<(), Error> {
-        let wifi = self.0.lock().await;
+    impl<'a> Netif for EspWifiSplit<'a> {
+        async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
+            let wifi = self.0.lock().await;
 
-        EspMatterNetif::new(wifi.wifi().sta_netif(), self.1.clone())
-            .wait_conf_change()
-            .await
+            EspMatterNetif::new(wifi.wifi().sta_netif(), self.1.clone())
+                .get_conf()
+                .await
+        }
+
+        async fn wait_conf_change(&self) -> Result<(), Error> {
+            let wifi = self.0.lock().await;
+
+            EspMatterNetif::new(wifi.wifi().sta_netif(), self.1.clone())
+                .wait_conf_change()
+                .await
+        }
     }
-}
 
-impl<'a> NetifRun for EspWifiSplit<'a> {
-    async fn run(&self) -> Result<(), Error> {
-        core::future::pending().await
+    impl<'a> NetifRun for EspWifiSplit<'a> {
+        async fn run(&self) -> Result<(), Error> {
+            core::future::pending().await
+        }
     }
-}
 
-impl<'a> UdpBind for EspWifiSplit<'a> {
-    type Error = io::Error;
-    type Socket<'b>
-        = UdpSocket
-    where
-        Self: 'b;
+    impl<'a> UdpBind for EspWifiSplit<'a> {
+        type Error = io::Error;
+        type Socket<'b>
+            = UdpSocket
+        where
+            Self: 'b;
 
-    async fn bind(&self, local: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
-        Stack::new().bind(local).await
+        async fn bind(
+            &self,
+            local: core::net::SocketAddr,
+        ) -> Result<Self::Socket<'_>, Self::Error> {
+            Stack::new().bind(local).await
+        }
     }
-}
 
-/// A `Wireless` trait implementation via ESP-IDF's Wifi modem
-pub struct EspMatterWifi<'d, T> {
-    modem: PeripheralRef<'d, T>,
-    sysloop: EspSystemEventLoop,
-    timer: EspTaskTimerService,
-    nvs: EspDefaultNvsPartition,
-}
-
-impl<'d, T> EspMatterWifi<'d, T>
-where
-    T: WifiModemPeripheral,
-{
-    /// Create a new instance of the `EspMatterWifi` type.
-    pub fn new(
-        modem: impl Peripheral<P = T> + 'd,
+    /// A `Wireless` trait implementation via ESP-IDF's Wifi modem
+    pub struct EspMatterWifi<'d, T> {
+        modem: PeripheralRef<'d, T>,
         sysloop: EspSystemEventLoop,
         timer: EspTaskTimerService,
         nvs: EspDefaultNvsPartition,
-    ) -> Self {
-        into_ref!(modem);
+    }
 
-        Self {
-            modem,
-            sysloop,
-            timer,
-            nvs,
+    impl<'d, T> EspMatterWifi<'d, T>
+    where
+        T: WifiModemPeripheral,
+    {
+        /// Create a new instance of the `EspMatterWifi` type.
+        pub fn new(
+            modem: impl Peripheral<P = T> + 'd,
+            sysloop: EspSystemEventLoop,
+            timer: EspTaskTimerService,
+            nvs: EspDefaultNvsPartition,
+        ) -> Self {
+            into_ref!(modem);
+
+            Self {
+                modem,
+                sysloop,
+                timer,
+                nvs,
+            }
         }
     }
-}
 
-impl<'d, T> Wireless for EspMatterWifi<'d, T>
-where
-    T: WifiModemPeripheral,
-{
-    type Data = WifiData;
-
-    type Netif<'a>
-        = EspWifiSplit<'a>
+    impl<'d, T> Wireless for EspMatterWifi<'d, T>
     where
-        Self: 'a;
+        T: WifiModemPeripheral,
+    {
+        type Data = WifiData;
 
-    type Controller<'a>
-        = SvcWifiController<EspWifiSplit<'a>>
-    where
-        Self: 'a;
+        type Netif<'a>
+            = EspWifiSplit<'a>
+        where
+            Self: 'a;
 
-    async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
-        let wifi = Arc::new(Mutex::new(
-            AsyncWifi::wrap(
-                EspWifi::new(
-                    &mut self.modem,
+        type Controller<'a>
+            = SvcWifiController<EspWifiSplit<'a>>
+        where
+            Self: 'a;
+
+        async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
+            let wifi = Arc::new(Mutex::new(
+                AsyncWifi::wrap(
+                    EspWifi::new(
+                        &mut self.modem,
+                        self.sysloop.clone(),
+                        Some(self.nvs.clone()),
+                    )
+                    .map_err(|_| ErrorCode::NoNetworkInterface)?, // TODO
                     self.sysloop.clone(),
-                    Some(self.nvs.clone()),
+                    self.timer.clone(),
                 )
                 .map_err(|_| ErrorCode::NoNetworkInterface)?, // TODO
-                self.sysloop.clone(),
-                self.timer.clone(),
-            )
-            .map_err(|_| ErrorCode::NoNetworkInterface)?, // TODO
-        ));
+            ));
 
-        Ok((
-            EspWifiSplit(wifi.clone(), self.sysloop.clone()),
-            SvcWifiController::new(EspWifiSplit(wifi.clone(), self.sysloop.clone())),
-        ))
+            Ok((
+                EspWifiSplit(wifi.clone(), self.sysloop.clone()),
+                SvcWifiController::new(EspWifiSplit(wifi.clone(), self.sysloop.clone())),
+            ))
+        }
     }
 }

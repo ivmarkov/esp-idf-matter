@@ -37,11 +37,10 @@ debug = true
 opt-level = "z"
 
 [features]
-#default = ["rs-matter-stack"]
-default = ["rs-matter-stack", "async-io-mini"]
-rs-matter-stack = ["dep:rs-matter-stack", "std"]
+#default = ["std", "rs-matter-stack"]
+default = ["std", "rs-matter-stack", "async-io-mini"]
 async-io-mini = ["std", "edge-nal-std/async-io-mini"]
-std = ["esp-idf-svc/std", "edge-nal-std"]
+std = ["esp-idf-svc/std", "edge-nal-std", "rs-matter-stack?/std"]
 examples = ["default", "esp-idf-svc/binstart", "esp-idf-svc/critical-section"] # Enable only when building the examples
 
 [dependencies]
@@ -55,7 +54,7 @@ esp-idf-svc = { version = "0.49.1", default-features = false, features = ["alloc
 embedded-svc = { version = "0.28", default-features = false }
 rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
 async-io = { version = "=2.0.0", default-features = false } # Workaround for https://github.com/smol-rs/async-lock/issues/84
-rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", branch = "thread", default-features = false, features = ["std"], optional = true }
+rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", branch = "thread", default-features = false, optional = true }
 edge-nal = "0.3"
 edge-nal-std = { version = "0.3", default-features = false, optional = true }
 

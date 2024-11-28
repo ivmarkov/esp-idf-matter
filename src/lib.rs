@@ -72,7 +72,7 @@ pub mod wireless;
 /// User is expected to call this method early in the application's lifecycle
 /// when there is plenty of task stack space available, as the initialization
 /// of `async-io` consumes > 10KB of stack space, so it has to be done with care.
-/// 
+///
 /// Note that `async-io-mini` is much less demanding.
 #[inline(never)]
 #[cold]

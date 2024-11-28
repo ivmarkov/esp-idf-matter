@@ -293,7 +293,7 @@ where
     }
 }
 
-impl<'a, 'd, M> GattPeripheral for EspBtpGattPeripheral<'a, 'd, M>
+impl<M> GattPeripheral for EspBtpGattPeripheral<'_, '_, M>
 where
     M: BleEnabled,
 {

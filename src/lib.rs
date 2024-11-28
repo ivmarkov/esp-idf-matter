@@ -71,13 +71,16 @@ pub mod wireless;
 ///
 /// User is expected to call this method early in the application's lifecycle
 /// when there is plenty of task stack space available, as the initialization
-/// consumes > 10KB of stack space, so it has to be done with care.
+/// of `async-io` consumes > 10KB of stack space, so it has to be done with care.
+/// 
+/// Note that `async-io-mini` is much less demanding.
 #[inline(never)]
 #[cold]
 #[cfg(feature = "std")]
 pub fn init_async_io() -> Result<(), esp_idf_svc::sys::EspError> {
-    // We'll use `async-io` for networking, so ESP IDF VFS needs to be initialized
-    esp_idf_svc::io::vfs::initialize_eventfd(3)?;
+    // We'll use `async-io(-mini)` for networking, so ESP IDF VFS needs to be initialized
+    // esp_idf_svc::io::vfs::initialize_eventfd(3)?;
+    core::mem::forget(esp_idf_svc::io::vfs::MountedEventfs::mount(3));
 
     esp_idf_svc::hal::task::block_on(init_async_io_async());
 

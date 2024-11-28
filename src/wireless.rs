@@ -139,7 +139,7 @@ where
     }
 }
 
-impl<'a, 'd, T> Ble for EspMatterBle<'a, 'd, T>
+impl<'a, T> Ble for EspMatterBle<'a, '_, T>
 where
     T: BluetoothModemPeripheral,
 {
@@ -239,7 +239,7 @@ mod wifi {
         EspSystemEventLoop,
     );
 
-    impl<'a> WifiSvc for EspWifiSplit<'a> {
+    impl WifiSvc for EspWifiSplit<'_> {
         type Error = EspError;
 
         async fn get_capabilities(&self) -> Result<EnumSet<Capability>, Self::Error> {
@@ -320,7 +320,7 @@ mod wifi {
         }
     }
 
-    impl<'a> Netif for EspWifiSplit<'a> {
+    impl Netif for EspWifiSplit<'_> {
         async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
             let wifi = self.0.lock().await;
 
@@ -341,13 +341,13 @@ mod wifi {
         }
     }
 
-    impl<'a> NetifRun for EspWifiSplit<'a> {
+    impl NetifRun for EspWifiSplit<'_> {
         async fn run(&self) -> Result<(), Error> {
             core::future::pending().await
         }
     }
 
-    impl<'a> UdpBind for EspWifiSplit<'a> {
+    impl UdpBind for EspWifiSplit<'_> {
         type Error = io::Error;
         type Socket<'b>
             = UdpSocket
@@ -392,7 +392,7 @@ mod wifi {
         }
     }
 
-    impl<'d, T> Wireless for EspMatterWifi<'d, T>
+    impl<T> Wireless for EspMatterWifi<'_, T>
     where
         T: WifiModemPeripheral,
     {

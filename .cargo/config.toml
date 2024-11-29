@@ -5,18 +5,23 @@ target = "xtensa-esp32-espidf"
 #target = "xtensa-esp32s3-espidf"
 
 [target.xtensa-esp32-espidf]
+rustflags = ["--cfg", "espidf_time64"]
 linker = "ldproxy"
 
 [target.xtensa-esp32s2-espidf]
+rustflags = ["--cfg", "espidf_time64"]
 linker = "ldproxy"
 
 [target.xtensa-esp32s3-espidf]
+rustflags = ["--cfg", "espidf_time64"]
 linker = "ldproxy"
 
 [target.riscv32imc-esp-espidf]
+rustflags = ["--cfg", "espidf_time64"]
 linker = "ldproxy"
 
 [target.riscv32imac-esp-espidf]
+rustflags = ["--cfg", "espidf_time64"]
 linker = "ldproxy"
 
 [unstable]

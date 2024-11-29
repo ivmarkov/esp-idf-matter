@@ -5,12 +5,55 @@ use log::info;
 
 use rs_matter::error::Error;
 
-use rs_matter_stack::persist::{Key, KvBlobStore, KvPersist};
+use rs_matter_stack::network::{Embedding, Network};
+use rs_matter_stack::persist::{Key, KvBlobBuf, KvBlobStore, KvPersist};
+use rs_matter_stack::MatterStack;
 
 use crate::error::to_persist_error;
 
 /// A type alias for a `KvPersist` instance that uses the ESP IDF NVS API
 pub type EspMatterPersist<'a, T, C> = KvPersist<'a, EspKvBlobStore<T>, C>;
+
+/// Create a new ESP-IDF Matter persist instance that would persist in namespace `esp-idf-matter`.
+///
+/// # Arguments
+/// - `nvs`: The NVS partition to use for persisting data.
+/// - `stack`: The Matter stack instance.
+pub fn new_default<'a, T, N, Q>(
+    nvs: EspNvsPartition<T>,
+    stack: &'a MatterStack<'a, N>,
+) -> Result<EspMatterPersist<'a, T, N::PersistContext<'a>>, EspError>
+where
+    T: NvsPartitionId,
+    N: Network<Embedding = KvBlobBuf<Q>>,
+    Q: Embedding + 'a,
+{
+    new(nvs, "esp-idf-matter", stack)
+}
+
+/// Create a new ESP-IDF Matter persist instance.
+///
+/// # Arguments
+/// - `nvs`: The NVS partition to use for persisting data.
+/// - `namespace`: The namespace to use for persisting data.
+/// - `stack`: The Matter stack instance.
+pub fn new<'a, T, N, Q>(
+    nvs: EspNvsPartition<T>,
+    namespace: &str,
+    stack: &'a MatterStack<'a, N>,
+) -> Result<EspMatterPersist<'a, T, N::PersistContext<'a>>, EspError>
+where
+    T: NvsPartitionId,
+    N: Network<Embedding = KvBlobBuf<Q>>,
+    Q: Embedding + 'a,
+{
+    Ok(EspMatterPersist::wrap(
+        EspKvBlobStore::new(nvs, namespace)?,
+        stack.network().embedding().buf(),
+        stack.matter(),
+        stack.network().persist_context(),
+    ))
+}
 
 /// A `KvBlobStore`` implementation that uses the ESP IDF NVS API
 /// to store and load the BLOBs.

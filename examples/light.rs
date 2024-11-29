@@ -15,6 +15,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
+use esp_idf_matter::persist;
 use esp_idf_matter::{init_async_io, EspMatterBle, EspMatterWifi, EspWifiNCMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -35,7 +36,6 @@ use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 
 use rs_matter::BasicCommData;
-use rs_matter_stack::persist::DummyPersist;
 
 use static_cell::StaticCell;
 
@@ -141,12 +141,11 @@ async fn matter() -> Result<(), anyhow::Error> {
         // The Matter stack needs the Wifi modem peripheral
         EspMatterWifi::new(&mut wifi_modem, sysloop, timers, nvs.clone()),
         // The Matter stack needs the BT modem peripheral
-        EspMatterBle::new(&mut bt_modem, nvs, stack),
+        EspMatterBle::new(&mut bt_modem, nvs.clone(), stack),
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`
-        DummyPersist,
-        //EspPersist::new_wifi_ble(EspKvBlobStore::new_default(nvs.clone())?, stack),
+        persist::new_default(nvs, stack)?,
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run

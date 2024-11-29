@@ -41,7 +41,7 @@ opt-level = "z"
 
 [features]
 #default = ["std", "rs-matter-stack"]
-default = ["std", "rs-matter-stack", "async-io-mini"]
+default = ["std", "rs-matter-stack", "async-io-mini", "examples"]
 async-io-mini = ["std", "edge-nal-std/async-io-mini"]
 std = ["esp-idf-svc/std", "edge-nal-std", "rs-matter-stack?/std"]
 examples = ["default", "esp-idf-svc/binstart", "esp-idf-svc/critical-section"] # Enable only when building the examples

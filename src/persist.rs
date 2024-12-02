@@ -26,7 +26,7 @@ pub fn new_default<'a, T, N, Q>(
 where
     T: NvsPartitionId,
     N: Network<Embedding = KvBlobBuf<Q>>,
-    Q: Embedding + 'a,
+    Q: Embedding + 'static,
 {
     new(nvs, "esp-idf-matter", stack)
 }
@@ -45,13 +45,11 @@ pub fn new<'a, T, N, Q>(
 where
     T: NvsPartitionId,
     N: Network<Embedding = KvBlobBuf<Q>>,
-    Q: Embedding + 'a,
+    Q: Embedding + 'static,
 {
-    Ok(EspMatterPersist::wrap(
+    Ok(rs_matter_stack::persist::new_kv(
         EspKvBlobStore::new(nvs, namespace)?,
-        stack.network().embedding().buf(),
-        stack.matter(),
-        stack.network().persist_context(),
+        stack,
     ))
 }
 

@@ -24,13 +24,8 @@ rust-version = "1.78"
 [patch.crates-io]
 rs-matter = { git = "https://github.com/project-chip/rs-matter" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
-#edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal = { path = "../edge-net/edge-nal" }
-#edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal-std = { path = "../edge-net/edge-nal-std" }
-esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc" }
-esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal" }
-esp-idf-sys = { git = "https://github.com/esp-rs/esp-idf-sys" }
 
 [profile.release]
 opt-level = "s"
@@ -53,16 +48,16 @@ enumset = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.6"
 embassy-time = { version = "0.3", features = ["generic-queue"] }
-esp-idf-svc = { version = "0.49.1", default-features = false, features = ["alloc", "embassy-sync", "embassy-time-driver", "experimental"] }
+esp-idf-svc = { version = "0.50", default-features = false, features = ["alloc", "embassy-sync", "embassy-time-driver", "experimental"] }
 embedded-svc = { version = "0.28", default-features = false }
 rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
 async-io = { version = "=2.0.0", default-features = false } # Workaround for https://github.com/smol-rs/async-lock/issues/84
 rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", default-features = false, optional = true }
-edge-nal = "0.3"
-edge-nal-std = { version = "0.3", default-features = false, optional = true }
+edge-nal = "0.4"
+edge-nal-std = { version = "0.4", default-features = false, optional = true }
 
 [build-dependencies]
-embuild = "0.32"
+embuild = "0.33"
 
 [dev-dependencies]
 embassy-time = { version = "0.3", features = ["generic-queue"] }

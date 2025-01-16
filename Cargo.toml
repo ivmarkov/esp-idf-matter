@@ -47,20 +47,20 @@ heapless = "0.8"
 enumset = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.6"
-embassy-time = { version = "0.3", features = ["generic-queue"] }
-esp-idf-svc = { version = "0.50", default-features = false, features = ["alloc", "embassy-sync", "embassy-time-driver", "experimental"] }
+embassy-time = "0.4"
+esp-idf-svc = { version = "0.51", default-features = false, features = ["alloc", "embassy-sync", "embassy-time-driver", "experimental"] }
 embedded-svc = { version = "0.28", default-features = false }
 rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
 async-io = { version = "=2.0.0", default-features = false } # Workaround for https://github.com/smol-rs/async-lock/issues/84
 rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", default-features = false, optional = true }
-edge-nal = "0.4"
-edge-nal-std = { version = "0.4", default-features = false, optional = true }
+edge-nal = "0.5"
+edge-nal-std = { version = "0.5", default-features = false, optional = true }
 
 [build-dependencies]
 embuild = "0.33"
 
 [dev-dependencies]
-embassy-time = { version = "0.3", features = ["generic-queue"] }
+embassy-time-queue-utils = { version = "0.1", features = ["generic-queue-64"] }
 static_cell = "2.1"
 anyhow = "1"
 

@@ -35,6 +35,15 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
+use esp_idf_matter::matter::data_model::cluster_basic_information::BasicInfoConfig;
+use esp_idf_matter::matter::data_model::cluster_on_off;
+use esp_idf_matter::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
+use esp_idf_matter::matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
+use esp_idf_matter::matter::data_model::system_model::descriptor;
+use esp_idf_matter::matter::utils::init::InitMaybeUninit;
+use esp_idf_matter::matter::utils::select::Coalesce;
+use esp_idf_matter::persist;
+use esp_idf_matter::stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 use esp_idf_matter::{init_async_io, EspMatterBle, EspMatterWifi, EspWifiNCMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -46,21 +55,7 @@ use esp_idf_svc::timer::EspTaskTimerService;
 
 use log::{error, info};
 
-use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
-use rs_matter::data_model::cluster_on_off;
-use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
-use rs_matter::data_model::system_model::descriptor;
-use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
-
-use rs_matter::BasicCommData;
-use rs_matter_stack::persist::DummyPersist;
-
 use static_cell::StaticCell;
-
-#[path = "dev_att/dev_att.rs"]
-mod dev_att;
 
 fn main() -> Result<(), anyhow::Error> {
     EspLogger::initialize_default();
@@ -105,8 +100,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         .uninit()
         .init_with(EspWifiNCMatterStack::init_default(
             &BasicInfoConfig {
-                vid: 0xFFF1,
-                pid: 0x8000,
+                vid: TEST_VID,
+                pid: TEST_PID,
                 hw_ver: 2,
                 sw_ver: 1,
                 sw_ver_str: "1",
@@ -115,11 +110,8 @@ async fn matter() -> Result<(), anyhow::Error> {
                 product_name: "ACME Light",
                 vendor_name: "ACME",
             },
-            BasicCommData {
-                password: 20202021,
-                discriminator: 3840,
-            },
-            &DEV_ATT,
+            TEST_BASIC_COMM_DATA,
+            &TEST_DEV_ATT,
         ));
 
     // Take some generic ESP-IDF stuff we'll need later
@@ -161,12 +153,11 @@ async fn matter() -> Result<(), anyhow::Error> {
         // The Matter stack needs the Wifi modem peripheral
         EspMatterWifi::new(&mut wifi_modem, sysloop, timers, nvs.clone()),
         // The Matter stack needs the BT modem peripheral
-        EspMatterBle::new(&mut bt_modem, nvs, stack),
+        EspMatterBle::new(&mut bt_modem, nvs.clone(), stack),
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`
-        DummyPersist,
-        //EspPersist::new_wifi_ble(EspKvBlobStore::new_default(nvs.clone())?, stack),
+        persist::new_default(nvs, stack)?,
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -204,8 +195,6 @@ async fn matter() -> Result<(), anyhow::Error> {
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
 static MATTER_STACK: StaticCell<EspWifiNCMatterStack<()>> = StaticCell::new();
-
-static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1

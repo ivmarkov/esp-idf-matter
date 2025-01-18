@@ -51,8 +51,8 @@ embassy-time = "0.4"
 esp-idf-svc = { version = "0.51", default-features = false, features = ["alloc", "embassy-sync", "embassy-time-driver", "experimental"] }
 embedded-svc = { version = "0.28", default-features = false }
 rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
+rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", default-features = false, optional = true, features = ["rustcrypto"] }
 async-io = { version = "=2.0.0", default-features = false } # Workaround for https://github.com/smol-rs/async-lock/issues/84
-rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", default-features = false, optional = true }
 edge-nal = "0.5"
 edge-nal-std = { version = "0.5", default-features = false, optional = true }
 

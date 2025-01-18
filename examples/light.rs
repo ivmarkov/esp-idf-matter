@@ -15,7 +15,15 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
+use esp_idf_matter::matter::data_model::cluster_basic_information::BasicInfoConfig;
+use esp_idf_matter::matter::data_model::cluster_on_off;
+use esp_idf_matter::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
+use esp_idf_matter::matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
+use esp_idf_matter::matter::data_model::system_model::descriptor;
+use esp_idf_matter::matter::utils::init::InitMaybeUninit;
+use esp_idf_matter::matter::utils::select::Coalesce;
 use esp_idf_matter::persist;
+use esp_idf_matter::stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 use esp_idf_matter::{init_async_io, EspMatterBle, EspMatterWifi, EspWifiNCMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -26,16 +34,6 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
 
 use log::{error, info};
-
-use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
-use rs_matter::data_model::cluster_on_off;
-use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
-use rs_matter::data_model::system_model::descriptor;
-use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
-
-use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 
 use static_cell::StaticCell;
 

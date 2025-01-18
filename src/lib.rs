@@ -41,6 +41,7 @@ pub mod ble;
 pub mod error;
 #[cfg(all(feature = "std", feature = "rs-matter-stack"))]
 pub mod eth;
+pub mod matter;
 #[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
 pub mod mdns;
 #[cfg(all(
@@ -53,6 +54,8 @@ pub mod netif;
 #[cfg(esp_idf_comp_nvs_flash_enabled)]
 #[cfg(feature = "rs-matter-stack")]
 pub mod persist;
+#[cfg(feature = "rs-matter-stack")]
+pub mod stack;
 #[cfg(all(
     not(esp32h2),
     not(esp32s2),

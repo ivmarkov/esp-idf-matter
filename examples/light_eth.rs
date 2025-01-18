@@ -36,12 +36,9 @@ use rs_matter::data_model::system_model::descriptor;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 
-use rs_matter::BasicCommData;
+use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 
 use static_cell::StaticCell;
-
-#[path = "dev_att/dev_att.rs"]
-mod dev_att;
 
 const WIFI_SSID: &str = env!("WIFI_SSID");
 const WIFI_PASS: &str = env!("WIFI_PASS");
@@ -89,8 +86,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         .uninit()
         .init_with(EspEthMatterStack::init_default(
             &BasicInfoConfig {
-                vid: 0xFFF1,
-                pid: 0x8000,
+                vid: TEST_VID,
+                pid: TEST_PID,
                 hw_ver: 2,
                 sw_ver: 1,
                 sw_ver_str: "1",
@@ -99,11 +96,8 @@ async fn matter() -> Result<(), anyhow::Error> {
                 product_name: "ACME Light",
                 vendor_name: "ACME",
             },
-            BasicCommData {
-                password: 20202021,
-                discriminator: 3840,
-            },
-            &DEV_ATT,
+            TEST_BASIC_COMM_DATA,
+            &TEST_DEV_ATT,
         ));
 
     // Take some generic ESP-IDF stuff we'll need later
@@ -202,8 +196,6 @@ async fn matter() -> Result<(), anyhow::Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 static MATTER_STACK: StaticCell<EspEthMatterStack<()>> = StaticCell::new();
-
-static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1

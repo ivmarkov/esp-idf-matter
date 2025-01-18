@@ -160,6 +160,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         // Since we are pretending to use a wired Ethernet connection - yet -
         // we are using a Wifi STA, provide the Wifi netif here
         EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
+        // The Matter stack needs UDP sockets to communicate with other Matter devices
+        edge_nal_std::Stack::new(),
         // The Matter stack needs a persister to store its state
         // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
         // under namespace `esp-idf-matter`

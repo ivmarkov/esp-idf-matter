@@ -11,7 +11,7 @@ use rs_matter::utils::init::{init, Init};
 
 use rs_matter_stack::network::{Embedding, Network};
 use rs_matter_stack::persist::KvBlobBuf;
-use rs_matter_stack::wireless::traits::{Ble, WirelessConfig, WirelessData};
+use rs_matter_stack::wireless::traits::{Ble, BleTask, WirelessConfig, WirelessData};
 use rs_matter_stack::{MatterStack, WirelessBle};
 
 use crate::ble::{EspBtpGattContext, EspBtpGattPeripheral};
@@ -139,21 +139,20 @@ where
     }
 }
 
-impl<'a, T> Ble for EspMatterBle<'a, '_, T>
+impl<T> Ble for EspMatterBle<'_, '_, T>
 where
     T: BluetoothModemPeripheral,
 {
-    type Peripheral<'t>
-        = EspBtpGattPeripheral<'a, 't, bt::Ble>
+    async fn run<A>(&mut self, mut task: A) -> Result<(), Error>
     where
-        Self: 't;
-
-    async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error> {
+        A: BleTask,
+    {
         let bt = BtDriver::new(&mut self.modem, Some(self.nvs.clone())).unwrap();
 
-        let peripheral = EspBtpGattPeripheral::new(GATTS_APP_ID, bt, self.context).unwrap();
+        let peripheral =
+            EspBtpGattPeripheral::<bt::Ble>::new(GATTS_APP_ID, bt, self.context).unwrap();
 
-        Ok(peripheral)
+        task.run(peripheral).await
     }
 }
 
@@ -183,12 +182,7 @@ mod thread {
 
 #[cfg(esp_idf_comp_esp_wifi_enabled)]
 mod wifi {
-    use std::io;
-
     use alloc::sync::Arc;
-
-    use edge_nal::UdpBind;
-    use edge_nal_std::{Stack, UdpSocket};
 
     use embassy_sync::mutex::Mutex;
 
@@ -210,9 +204,9 @@ mod wifi {
 
     use rs_matter::error::Error;
 
-    use rs_matter_stack::netif::{Netif, NetifConf, NetifRun};
+    use rs_matter_stack::netif::{Netif, NetifConf};
     use rs_matter_stack::wireless::svc::SvcWifiController;
-    use rs_matter_stack::wireless::traits::{Wifi, WifiData, Wireless, NC};
+    use rs_matter_stack::wireless::traits::{Wifi, WifiData, Wireless, WirelessTask, NC};
 
     use crate::error::to_net_error;
     use crate::netif::EspMatterNetif;
@@ -234,12 +228,20 @@ mod wifi {
 
     /// The relation between a network interface and a controller is slightly different
     /// in the ESP-IDF crates compared to what `rs-matter-stack` wants, hence we need this helper type.
-    pub struct EspWifiSplit<'a>(
+    #[derive(Clone)]
+    pub struct EspSharedWifi<'a>(
         Arc<Mutex<EspRawMutex, AsyncWifi<EspWifi<'a>>>>,
         EspSystemEventLoop,
     );
 
-    impl WifiSvc for EspWifiSplit<'_> {
+    impl<'a> EspSharedWifi<'a> {
+        /// Create a new instance of the `EspSharedWifi` type.
+        pub fn new(wifi: AsyncWifi<EspWifi<'a>>, sysloop: EspSystemEventLoop) -> Self {
+            Self(Arc::new(Mutex::new(wifi)), sysloop)
+        }
+    }
+
+    impl WifiSvc for EspSharedWifi<'_> {
         type Error = EspError;
 
         async fn get_capabilities(&self) -> Result<EnumSet<Capability>, Self::Error> {
@@ -320,7 +322,7 @@ mod wifi {
         }
     }
 
-    impl Netif for EspWifiSplit<'_> {
+    impl Netif for EspSharedWifi<'_> {
         async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
             let wifi = self.0.lock().await;
 
@@ -338,27 +340,6 @@ mod wifi {
                 .map_err(to_net_error)?;
 
             Ok(())
-        }
-    }
-
-    impl NetifRun for EspWifiSplit<'_> {
-        async fn run(&self) -> Result<(), Error> {
-            core::future::pending().await
-        }
-    }
-
-    impl UdpBind for EspWifiSplit<'_> {
-        type Error = io::Error;
-        type Socket<'b>
-            = UdpSocket
-        where
-            Self: 'b;
-
-        async fn bind(
-            &self,
-            local: core::net::SocketAddr,
-        ) -> Result<Self::Socket<'_>, Self::Error> {
-            Stack::new().bind(local).await
         }
     }
 
@@ -398,33 +379,30 @@ mod wifi {
     {
         type Data = WifiData;
 
-        type Netif<'a>
-            = EspWifiSplit<'a>
+        async fn run<A>(&mut self, mut task: A) -> Result<(), Error>
         where
-            Self: 'a;
-
-        type Controller<'a>
-            = SvcWifiController<EspWifiSplit<'a>>
-        where
-            Self: 'a;
-
-        async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
-            let wifi = EspWifi::new(
-                &mut self.modem,
+            A: WirelessTask<Data = Self::Data>,
+        {
+            let wifi = AsyncWifi::wrap(
+                EspWifi::new(
+                    &mut self.modem,
+                    self.sysloop.clone(),
+                    Some(self.nvs.clone()),
+                )
+                .map_err(to_net_error)?,
                 self.sysloop.clone(),
-                Some(self.nvs.clone()),
+                self.timer.clone(),
             )
             .map_err(to_net_error)?;
 
-            let wifi = Arc::new(Mutex::new(
-                AsyncWifi::wrap(wifi, self.sysloop.clone(), self.timer.clone())
-                    .map_err(to_net_error)?,
-            ));
+            let wifi = EspSharedWifi::new(wifi, self.sysloop.clone());
 
-            Ok((
-                EspWifiSplit(wifi.clone(), self.sysloop.clone()),
-                SvcWifiController::new(EspWifiSplit(wifi.clone(), self.sysloop.clone())),
-            ))
+            task.run(
+                wifi.clone(),
+                edge_nal_std::Stack::new(),
+                SvcWifiController::new(wifi),
+            )
+            .await
         }
     }
 }

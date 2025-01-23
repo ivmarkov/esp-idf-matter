@@ -124,7 +124,11 @@ async fn matter() -> Result<(), anyhow::Error> {
             ))),
         );
 
+    #[cfg(not(esp32c6))]
     let (mut wifi_modem, mut bt_modem) = peripherals.modem.split();
+
+    #[cfg(esp32c6)]
+    let (mut wifi_modem, _, mut bt_modem) = peripherals.modem.split();
 
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`

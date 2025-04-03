@@ -97,16 +97,6 @@ mod thread {
 
     /// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
     pub type EspThreadMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread, E>;
-
-    /// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
-    ///
-    /// Unlike `EspThreadMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
-    /// where the device runs either BLE or Thread, but not both at the same time.
-    ///
-    /// This is useful to save memory by only having one of the stacks active at any point in time.
-    ///
-    /// Note that Alexa does not (yet) work with non-concurrent commissioning.
-    pub type EspThreadNCMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread<NC>, E>;
 }
 
 #[cfg(esp_idf_comp_esp_wifi_enabled)]
@@ -149,16 +139,6 @@ mod wifi {
 
     /// A type alias for an ESP-IDF Matter stack running over Wifi (and BLE, during commissioning).
     pub type EspWifiMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi, E>;
-
-    /// A type alias for an ESP-IDF Matter stack running over Wifi (and BLE, during commissioning).
-    ///
-    /// Unlike `EspWifiMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
-    /// where the device runs either BLE or Wifi, but not both at the same time.
-    ///
-    /// This is useful to save memory by only having one of the stacks active at any point in time.
-    ///
-    /// Note that Alexa does not (yet) work with non-concurrent commissioning.
-    pub type EspWifiNCMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi, E>;
 
     /// The relation between a network interface and a controller is slightly different
     /// in the ESP-IDF crates compared to what `rs-matter-stack` wants, hence we need this helper type.

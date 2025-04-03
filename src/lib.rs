@@ -17,20 +17,6 @@ extern crate std;
 #[macro_use]
 extern crate alloc;
 
-#[cfg(all(feature = "std", feature = "rs-matter-stack"))]
-pub use eth::*;
-#[cfg(all(
-    not(esp32h2),
-    not(esp32s2),
-    esp_idf_comp_esp_event_enabled,
-    not(esp_idf_btdm_ctrl_mode_br_edr_only),
-    esp_idf_bt_enabled,
-    esp_idf_bt_bluedroid_enabled,
-    feature = "std",
-    feature = "rs-matter-stack"
-))]
-pub use wireless::*;
-
 #[cfg(all(
     not(esp_idf_btdm_ctrl_mode_br_edr_only),
     esp_idf_bt_enabled,

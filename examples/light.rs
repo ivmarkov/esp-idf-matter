@@ -4,7 +4,7 @@
 //! and thus BLE for commissioning.
 //!
 //! If you want to use Ethernet, utilize `EspEthMatterStack` instead.
-//! If you want to use non-concurrent commissioning, utilize `EspWifiNCMatterStack` instead
+//! If you want to use concurrent commissioning, call `run_coex` instead of just `run`.
 //! (Note: Alexa does not work (yet) with non-concurrent commissioning.)
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
@@ -15,6 +15,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
+use esp_idf_matter::init_async_io;
 use esp_idf_matter::matter::data_model::cluster_basic_information::BasicInfoConfig;
 use esp_idf_matter::matter::data_model::cluster_on_off;
 use esp_idf_matter::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
@@ -22,9 +23,9 @@ use esp_idf_matter::matter::data_model::objects::{Dataver, Endpoint, HandlerComp
 use esp_idf_matter::matter::data_model::system_model::descriptor;
 use esp_idf_matter::matter::utils::init::InitMaybeUninit;
 use esp_idf_matter::matter::utils::select::Coalesce;
-use esp_idf_matter::persist;
+use esp_idf_matter::persist::EspKvBlobStore;
 use esp_idf_matter::stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
-use esp_idf_matter::{init_async_io, EspMatterBle, EspMatterWifi, EspWifiMatterStack};
+use esp_idf_matter::wireless::{EspMatterWifi, EspWifiMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -126,24 +127,15 @@ async fn matter() -> Result<(), anyhow::Error> {
             ))),
         );
 
-    #[cfg(not(esp32c6))]
-    let (mut wifi_modem, mut bt_modem) = peripherals.modem.split();
-
-    #[cfg(esp32c6)]
-    let (mut wifi_modem, _, mut bt_modem) = peripherals.modem.split();
-
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
+    let store = stack.create_shared_store(EspKvBlobStore::new_default(nvs.clone())?);
     let mut matter = pin!(stack.run(
-        // The Matter stack needs the Wifi modem peripheral
-        EspMatterWifi::new(&mut wifi_modem, sysloop, timers, nvs.clone()),
-        // The Matter stack needs the BT modem peripheral
-        EspMatterBle::new(&mut bt_modem, nvs.clone(), stack),
+        // The Matter stack needs the Wifi/BLE modem peripheral
+        EspMatterWifi::new(peripherals.modem, sysloop, timers, nvs, stack),
         // The Matter stack needs a persister to store its state
-        // `EspPersist`+`EspKvBlobStore` saves to a user-supplied NVS partition
-        // under namespace `esp-idf-matter`
-        persist::new_default(nvs, stack)?,
+        &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run

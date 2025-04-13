@@ -91,12 +91,183 @@ const GATTS_APP_ID: u16 = 0;
     esp_idf_comp_vfs_enabled,
 ))]
 mod thread {
-    use rs_matter_stack::wireless::traits::{Thread, NC};
+    use esp_idf_svc::io::vfs::MountedEventfs;
+    use rs_matter_stack::wireless::{Thread, ThreadData};
 
-    use super::EspWirelessMatterStack;
+    use alloc::sync::Arc;
+
+    use embassy_sync::mutex::Mutex;
+
+    use embedded_svc::wifi::asynch::Wifi as WifiSvc;
+
+    use enumset::EnumSet;
+
+    use esp_idf_svc::bt::{self, BtDriver};
+    use esp_idf_svc::eventloop::EspSystemEventLoop;
+    use esp_idf_svc::hal::into_ref;
+    use esp_idf_svc::hal::modem::Modem;
+    use esp_idf_svc::hal::peripheral::{Peripheral, PeripheralRef};
+    use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
+    use esp_idf_svc::handle::RawHandle;
+    use esp_idf_svc::netif::EspNetif;
+    use esp_idf_svc::nvs::EspDefaultNvsPartition;
+    use esp_idf_svc::sys::{esp, EspError};
+    use esp_idf_svc::timer::EspTaskTimerService;
+    use esp_idf_svc::wifi::{AccessPointInfo, AsyncWifi, Capability, Configuration, EspWifi};
+
+    use rs_matter::error::Error;
+
+    use rs_matter_stack::netif::{Netif, NetifConf};
+    use rs_matter_stack::network::{Embedding, Network};
+    use rs_matter_stack::wireless::svc::SvcWifiController;
+    use rs_matter_stack::wireless::{
+        Gatt, GattTask, Wifi, WifiData, Wireless, WirelessCoex, WirelessCoexTask, WirelessTask,
+    };
+
+    use crate::ble::{EspBtpGattContext, EspBtpGattPeripheral};
+    use crate::error::to_net_error;
+    use crate::netif::EspMatterNetif;
+    use esp_idf_svc::thread::EspThread;
+
+    use super::{EspWirelessMatterStack, GATTS_APP_ID};
 
     /// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
     pub type EspThreadMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread, E>;
+
+    /// A `Wireless` trait implementation via ESP-IDF's Thread/BT modem
+    pub struct EspMatterThread<'a, 'd> {
+        modem: PeripheralRef<'d, Modem>,
+        sysloop: EspSystemEventLoop,
+        timer: EspTaskTimerService,
+        nvs: EspDefaultNvsPartition,
+        mounted_event_fs: Arc<MountedEventfs>,
+        ble_context: &'a EspBtpGattContext,
+    }
+
+    impl<'a, 'd> EspMatterThread<'a, 'd> {
+        /// Create a new instance of the `EspMatterThread` type.
+        pub fn new<E>(
+            modem: impl Peripheral<P = Modem> + 'd,
+            sysloop: EspSystemEventLoop,
+            timer: EspTaskTimerService,
+            nvs: EspDefaultNvsPartition,
+            mounted_event_fs: Arc<MountedEventfs>,
+            stack: &'a EspThreadMatterStack<E>,
+        ) -> Self
+        where
+            E: Embedding + 'static,
+        {
+            Self::wrap(
+                modem,
+                sysloop,
+                timer,
+                nvs,
+                mounted_event_fs,
+                stack.network().embedding().context(),
+            )
+        }
+
+        /// Wrap existing parts into a new instance of the `EspMatterThread` type.
+        pub fn wrap(
+            modem: impl Peripheral<P = Modem> + 'd,
+            sysloop: EspSystemEventLoop,
+            timer: EspTaskTimerService,
+            nvs: EspDefaultNvsPartition,
+            mounted_event_fs: Arc<MountedEventfs>,
+            ble_context: &'a EspBtpGattContext,
+        ) -> Self {
+            into_ref!(modem);
+
+            Self {
+                modem,
+                sysloop,
+                timer,
+                nvs,
+                mounted_event_fs,
+                ble_context,
+            }
+        }
+    }
+
+    impl Wireless for EspMatterThread<'_, '_> {
+        type Data = ThreadData;
+
+        async fn run<A>(&mut self, mut task: A) -> Result<(), Error>
+        where
+            A: WirelessTask<Data = Self::Data>,
+        {
+            let mut thread = EspThread::new(
+                &mut self.modem, 
+                self.sysloop.clone(), 
+                self.nvs.clone(), 
+                self.mounted_event_fs.clone(),
+            )
+            .unwrap();
+
+            thread.init().unwrap();
+
+            task.run(
+                wifi.clone(),
+                edge_nal_std::Stack::new(),
+                SvcWifiController::new(wifi),
+            )
+            .await
+        }
+    }
+
+    impl Gatt for EspMatterThread<'_, '_> {
+        async fn run<A>(&mut self, mut task: A) -> Result<(), Error>
+        where
+            A: GattTask,
+        {
+            let bt = BtDriver::new(&mut self.modem, Some(self.nvs.clone())).unwrap();
+
+            let peripheral =
+                EspBtpGattPeripheral::<bt::Ble>::new(GATTS_APP_ID, bt, self.ble_context).unwrap();
+
+            task.run(peripheral).await
+        }
+    }
+
+    impl WirelessCoex for EspMatterThread<'_, '_> {
+        type Data = ThreadData;
+
+        async fn run<A>(&mut self, mut task: A) -> Result<(), Error>
+        where
+            A: WirelessCoexTask<Data = Self::Data>,
+        {
+            #[cfg(esp32h2)]
+            let (thread_p, bt_p) = self.modem.split_ref();
+
+            #[cfg(esp32c6)]
+            let (_, thread_p, bt_p) = self.modem.split_ref();
+
+            let mut thread = EspThread::new(
+                thread_p, 
+                self.sysloop.clone(), 
+                self.nvs.clone(), 
+                self.mounted_event_fs.clone(),
+            )
+            .unwrap();
+
+            thread.init().unwrap();
+
+            let bt = BtDriver::new(bt_p, Some(self.nvs.clone())).unwrap();
+
+            let peripheral =
+                EspBtpGattPeripheral::<bt::Ble>::new(GATTS_APP_ID, bt, self.ble_context).unwrap();
+
+            task.run(
+                wifi.clone(),
+                edge_nal_std::Stack::new(),
+                SvcWifiController::new(wifi),
+                peripheral,
+            )
+            .await
+        }
+    }
+
+    
 }
 
 #[cfg(esp_idf_comp_esp_wifi_enabled)]

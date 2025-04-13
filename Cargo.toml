@@ -23,8 +23,11 @@ rust-version = "1.78"
 
 [patch.crates-io]
 #rs-matter = { git = "https://github.com/project-chip/rs-matter" }
-rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "next" }
+rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "defmt" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
+edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
+edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
+edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
 
 [profile.release]
 opt-level = "s"
@@ -37,7 +40,7 @@ opt-level = "z"
 #default = ["std", "rs-matter-stack"]
 default = ["std", "rs-matter-stack", "async-io-mini"]
 async-io-mini = ["std", "edge-nal-std/async-io-mini"]
-std = ["esp-idf-svc/std", "edge-nal-std", "rs-matter-stack?/std"]
+std = ["esp-idf-svc/std", "edge-nal-std", "rs-matter-stack?/std", "rs-matter-stack?/log"]
 examples = ["default", "esp-idf-svc/binstart", "esp-idf-svc/critical-section"] # Enable only when building the examples
 
 [dependencies]

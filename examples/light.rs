@@ -65,7 +65,7 @@ fn run() -> Result<(), anyhow::Error> {
     let result = block_on(matter());
 
     if let Err(e) = &result {
-        error!("Matter aborted execution with error: {:?}", e);
+        error!("Matter aborted execution with error: {e:?}");
     }
     {
         info!("Matter finished execution successfully");

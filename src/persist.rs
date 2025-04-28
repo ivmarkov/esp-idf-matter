@@ -92,7 +92,7 @@ where
 
     fn skey(skey: &mut SKey, key: u16) -> &str {
         skey.clear();
-        write!(skey, "{:04x}", key).unwrap();
+        write!(skey, "{key:04x}").unwrap();
 
         skey.as_str()
     }

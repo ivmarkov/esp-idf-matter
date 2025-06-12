@@ -25,9 +25,9 @@ rust-version = "1.78"
 #rs-matter = { git = "https://github.com/project-chip/rs-matter" }
 rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "next" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
-edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
-edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
-edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
+#edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
+#edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
+#edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
 
 [profile.release]
 opt-level = "s"
@@ -37,10 +37,11 @@ debug = true
 opt-level = "z"
 
 [features]
-#default = ["std", "rs-matter-stack"]
-default = ["std", "rs-matter-stack", "async-io-mini"]
+#default = ["std", "log"]
+default = ["std", "async-io-mini", "log"]
 async-io-mini = ["std", "edge-nal-std/async-io-mini"]
-std = ["esp-idf-svc/std", "edge-nal-std", "rs-matter-stack?/std", "rs-matter-stack?/log"]
+std = ["esp-idf-svc/std", "edge-nal-std", "rs-matter-stack/std", "rs-matter-stack/log"]
+log = ["rs-matter-stack/log"]
 examples = ["default", "esp-idf-svc/binstart", "esp-idf-svc/critical-section"] # Enable only when building the examples
 
 [dependencies]
@@ -48,12 +49,11 @@ log = { version = "0.4", default-features = false }
 heapless = "0.8"
 enumset = { version = "1", default-features = false }
 embassy-futures = "0.1"
-embassy-sync = "0.6"
+embassy-sync = "0.7"
 embassy-time = "0.4"
-esp-idf-svc = { version = "0.51", default-features = false, features = ["alloc", "embassy-sync", "embassy-time-driver", "experimental"] }
+esp-idf-svc = { version = "0.51", default-features = false, features = ["alloc", "embassy-time-driver", "experimental"] }
 embedded-svc = { version = "0.28", default-features = false }
-rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
-rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", default-features = false, optional = true, features = ["rustcrypto"] }
+rs-matter-stack = { git = "https://github.com/ivmarkov/rs-matter-stack", default-features = false, features = ["rustcrypto"] }
 async-io = { version = "=2.0.0", default-features = false } # Workaround for https://github.com/smol-rs/async-lock/issues/84
 edge-nal = "0.5"
 edge-nal-std = { version = "0.5", default-features = false, optional = true }

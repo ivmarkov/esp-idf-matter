@@ -1,3 +1,5 @@
+//! This module provides the ESP IDF NVS implementation of the `KvBlobStore` trait for storing and loading BLOBs.
+
 use core::fmt::Write;
 
 use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsPartitionId};
@@ -5,7 +7,7 @@ use esp_idf_svc::sys::EspError;
 
 use log::info;
 
-use rs_matter::error::Error;
+use rs_matter_stack::matter::error::Error;
 
 use rs_matter_stack::persist::KvBlobStore;
 

@@ -15,16 +15,18 @@ use embassy_time::{Duration, Timer};
 
 use esp_idf_matter::eth::EspEthMatterStack;
 use esp_idf_matter::init_async_io;
-use esp_idf_matter::matter::data_model::cluster_basic_information::BasicInfoConfig;
-use esp_idf_matter::matter::data_model::cluster_on_off;
 use esp_idf_matter::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use esp_idf_matter::matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
-use esp_idf_matter::matter::data_model::system_model::descriptor;
+use esp_idf_matter::matter::data_model::objects::{
+    Async, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+};
+use esp_idf_matter::matter::data_model::on_off::{ClusterHandler as _, OnOffHandler};
+use esp_idf_matter::matter::data_model::system_model::desc::{ClusterHandler as _, DescHandler};
+use esp_idf_matter::matter::test_device::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use esp_idf_matter::matter::utils::init::InitMaybeUninit;
 use esp_idf_matter::matter::utils::select::Coalesce;
-use esp_idf_matter::netif::EspMatterNetif;
+use esp_idf_matter::matter::{clusters, devices};
+use esp_idf_matter::netif::{EspMatterNetif, EspMatterUdp};
 use esp_idf_matter::persist::EspKvBlobStore;
-use esp_idf_matter::stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -52,7 +54,7 @@ fn main() -> Result<(), anyhow::Error> {
     // confused by the low priority of the ESP IDF main task
     // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(60 * 1024)
+        .stack_size(70 * 1024)
         .spawn(|| {
             // Eagerly initialize `async-io` to minimize the risk of stack blowups later on
             init_async_io()?;
@@ -85,21 +87,8 @@ async fn matter() -> Result<(), anyhow::Error> {
     let stack = MATTER_STACK
         .uninit()
         .init_with(EspEthMatterStack::init_default(
-            &BasicInfoConfig {
-                vid: TEST_VID,
-                pid: TEST_PID,
-                hw_ver: 2,
-                hw_ver_str: "2",
-                sw_ver: 1,
-                sw_ver_str: "1",
-                serial_no: "aabbccdd",
-                device_name: "MyLight",
-                product_name: "ACME Light",
-                vendor_name: "ACME",
-                sai: None,
-                sii: None,
-            },
-            TEST_BASIC_COMM_DATA,
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));
 
@@ -125,28 +114,25 @@ async fn matter() -> Result<(), anyhow::Error> {
     // Matter needs an IPv6 address to work
     esp!(unsafe { esp_netif_create_ip6_linklocal(wifi.wifi().sta_netif().handle() as _) })?;
 
+    wifi.wait_netif_up().await?;
+
     // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
-    let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(stack.matter().rand()));
+    let on_off = OnOffHandler::new(Dataver::new_rand(stack.matter().rand())).adapt();
 
     // Chain our endpoint clusters with the
     // (root) Endpoint 0 system clusters in the final handler
-    let handler = stack
-        .root_handler()
+    let handler = EmptyHandler
         // Our on-off cluster, on Endpoint 1
         .chain(
-            LIGHT_ENDPOINT_ID,
-            cluster_on_off::ID,
-            HandlerCompat(&on_off),
+            EpClMatcher::new(Some(LIGHT_ENDPOINT_ID), Some(OnOffHandler::CLUSTER.id)),
+            Async(&on_off),
         )
         // Each Endpoint needs a Descriptor cluster too
         // Just use the one that `rs-matter` provides out of the box
         .chain(
-            LIGHT_ENDPOINT_ID,
-            descriptor::ID,
-            HandlerCompat(descriptor::DescriptorCluster::new(Dataver::new_rand(
-                stack.matter().rand(),
-            ))),
+            EpClMatcher::new(Some(LIGHT_ENDPOINT_ID), Some(DescHandler::CLUSTER.id)),
+            Async(DescHandler::new(Dataver::new_rand(stack.matter().rand())).adapt()),
         );
 
     // Run the Matter stack with our handler
@@ -154,18 +140,18 @@ async fn matter() -> Result<(), anyhow::Error> {
     // not being very intelligent w.r.t. stack usage in async functions
     let store = stack.create_shared_store(EspKvBlobStore::new_default(nvs)?);
     let mut matter = pin!(stack.run_preex(
+        // The Matter stack needs UDP sockets to communicate with other Matter devices
+        EspMatterUdp::new(),
         // The Matter stack need access to the netif on which we'll operate
         // Since we are pretending to use a wired Ethernet connection - yet -
         // we are using a Wifi STA, provide the Wifi netif here
         EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
-        // The Matter stack needs UDP sockets to communicate with other Matter devices
-        edge_nal_std::Stack::new(),
         // The Matter stack needs a persister to store its state
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
-        core::future::pending(),
+        (),
     ));
 
     // Just for demoing purposes:
@@ -179,7 +165,7 @@ async fn matter() -> Result<(), anyhow::Error> {
             Timer::after(Duration::from_secs(5)).await;
 
             // Toggle
-            on_off.set(!on_off.get());
+            on_off.0.set(!on_off.0.get());
 
             // Let the Matter stack know that we have changed
             // the state of our Light device
@@ -207,11 +193,11 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EspEthMatterStack::<()>::root_metadata(),
+        EspEthMatterStack::<()>::root_endpoint(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(DescHandler::CLUSTER, OnOffHandler::CLUSTER),
         },
     ],
 };

@@ -25,7 +25,7 @@ extern crate alloc;
 ))]
 pub mod ble;
 pub mod error;
-#[cfg(all(feature = "std", feature = "rs-matter-stack"))]
+#[cfg(feature = "std")]
 pub mod eth;
 pub mod matter;
 #[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
@@ -34,13 +34,10 @@ pub mod mdns;
     esp_idf_comp_esp_netif_enabled,
     esp_idf_comp_esp_event_enabled,
     feature = "std",
-    feature = "rs-matter-stack"
 ))]
 pub mod netif;
 #[cfg(esp_idf_comp_nvs_flash_enabled)]
-#[cfg(feature = "rs-matter-stack")]
 pub mod persist;
-#[cfg(feature = "rs-matter-stack")]
 pub mod stack;
 #[cfg(all(
     not(esp32h2),
@@ -51,7 +48,17 @@ pub mod stack;
     esp_idf_bt_enabled,
     esp_idf_bt_bluedroid_enabled,
     feature = "std",
-    feature = "rs-matter-stack"
+))]
+pub mod wifi;
+#[cfg(all(
+    not(esp32h2),
+    not(esp32s2),
+    esp_idf_comp_esp_wifi_enabled,
+    esp_idf_comp_esp_event_enabled,
+    not(esp_idf_btdm_ctrl_mode_br_edr_only),
+    esp_idf_bt_enabled,
+    esp_idf_bt_bluedroid_enabled,
+    feature = "std",
 ))]
 pub mod wireless;
 

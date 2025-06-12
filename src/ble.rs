@@ -1,7 +1,10 @@
+//! This module provides the ESP-IDF implementation of the GATT peripheral for the BTP protocol in `rs-matter`.
+
 use core::borrow::Borrow;
 
 use alloc::borrow::ToOwned;
 
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use enumset::enum_set;
 
 use esp_idf_svc::bt::ble::gap::{BleGapEvent, EspBleGap};
@@ -11,21 +14,20 @@ use esp_idf_svc::bt::ble::gatt::{
     GattServiceId, GattStatus, Handle, Permission, Property,
 };
 use esp_idf_svc::bt::{BdAddr, BleEnabled, BtDriver, BtStatus, BtUuid};
-use esp_idf_svc::hal::task::embassy_sync::EspRawMutex;
 use esp_idf_svc::sys::{EspError, ESP_ERR_INVALID_STATE, ESP_FAIL};
 
 use log::{debug, info, warn};
 
-use rs_matter::error::ErrorCode;
-use rs_matter::transport::network::btp::{
+use rs_matter_stack::matter::error::ErrorCode;
+use rs_matter_stack::matter::transport::network::btp::{
     AdvData, GattPeripheral, GattPeripheralEvent, C1_CHARACTERISTIC_UUID, C1_MAX_LEN,
     C2_CHARACTERISTIC_UUID, C2_MAX_LEN, MATTER_BLE_SERVICE_UUID16, MAX_BTP_SESSIONS,
 };
-use rs_matter::transport::network::BtAddr;
-use rs_matter::utils::cell::RefCell;
-use rs_matter::utils::init::{init, Init};
-use rs_matter::utils::sync::blocking::Mutex;
-use rs_matter::utils::sync::{IfMutex, Signal};
+use rs_matter_stack::matter::transport::network::BtAddr;
+use rs_matter_stack::matter::utils::cell::RefCell;
+use rs_matter_stack::matter::utils::init::{init, Init};
+use rs_matter_stack::matter::utils::sync::blocking::Mutex;
+use rs_matter_stack::matter::utils::sync::{IfMutex, Signal};
 
 const MAX_CONNECTIONS: usize = MAX_BTP_SESSIONS;
 const MAX_MTU_SIZE: usize = 512;
@@ -44,7 +46,7 @@ struct State {
     c1_handle: Option<Handle>,
     c2_handle: Option<Handle>,
     c2_cccd_handle: Option<Handle>,
-    connections: rs_matter::utils::storage::Vec<Connection, MAX_CONNECTIONS>,
+    connections: rs_matter_stack::matter::utils::storage::Vec<Connection, MAX_CONNECTIONS>,
     response: GattResponse,
 }
 
@@ -57,7 +59,7 @@ impl State {
             c1_handle: None,
             c2_handle: None,
             c2_cccd_handle: None,
-            connections: rs_matter::utils::storage::Vec::new(),
+            connections: rs_matter_stack::matter::utils::storage::Vec::new(),
             response: GattResponse::new(),
         }
     }
@@ -69,7 +71,7 @@ impl State {
             c1_handle: None,
             c2_handle: None,
             c2_cccd_handle: None,
-            connections <- rs_matter::utils::storage::Vec::init(),
+            connections <- rs_matter_stack::matter::utils::storage::Vec::init(),
             response <- gatt_response::init(),
         })
     }
@@ -78,7 +80,7 @@ impl State {
 #[derive(Debug)]
 struct IndBuffer {
     addr: BtAddr,
-    data: rs_matter::utils::storage::Vec<u8, MAX_MTU_SIZE>,
+    data: rs_matter_stack::matter::utils::storage::Vec<u8, MAX_MTU_SIZE>,
 }
 
 impl IndBuffer {
@@ -86,14 +88,14 @@ impl IndBuffer {
     const fn new() -> Self {
         Self {
             addr: BtAddr([0; 6]),
-            data: rs_matter::utils::storage::Vec::new(),
+            data: rs_matter_stack::matter::utils::storage::Vec::new(),
         }
     }
 
     fn init() -> impl Init<Self> {
         init!(Self {
             addr: BtAddr([0; 6]),
-            data <- rs_matter::utils::storage::Vec::init(),
+            data <- rs_matter_stack::matter::utils::storage::Vec::init(),
         })
     }
 }
@@ -101,10 +103,11 @@ impl IndBuffer {
 /// The `'static` state of the `EspBtpGattPeripheral` struct.
 /// Isolated as a separate struct to allow for `const fn` construction
 /// and static allocation.
+// TODO: Revert to `EspRawMutex` when `esp-idf-svc` is updated to `embassy-sync 0.7`
 pub struct EspBtpGattContext {
-    state: Mutex<EspRawMutex, RefCell<State>>,
-    ind: IfMutex<EspRawMutex, IndBuffer>,
-    ind_in_flight: Signal<EspRawMutex, bool>,
+    state: Mutex<CriticalSectionRawMutex /*EspRawMutex*/, RefCell<State>>,
+    ind: IfMutex<CriticalSectionRawMutex /*EspRawMutex*/, IndBuffer>,
+    ind_in_flight: Signal<CriticalSectionRawMutex /*EspRawMutex*/, bool>,
 }
 
 impl EspBtpGattContext {
@@ -302,7 +305,7 @@ where
         service_name: &str,
         adv_data: &AdvData,
         callback: F,
-    ) -> Result<(), rs_matter::error::Error>
+    ) -> Result<(), rs_matter_stack::matter::error::Error>
     where
         F: FnMut(GattPeripheralEvent) + Send + Clone + 'static,
     {
@@ -313,7 +316,11 @@ where
         Ok(())
     }
 
-    async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), rs_matter::error::Error> {
+    async fn indicate(
+        &self,
+        data: &[u8],
+        address: BtAddr,
+    ) -> Result<(), rs_matter_stack::matter::error::Error> {
         EspBtpGattPeripheral::indicate(self, data, address)
             .await
             .map_err(|_| ErrorCode::BtpError)?;
@@ -456,6 +463,7 @@ where
             }
             GattsEvent::PeerDisconnected { addr, .. } => {
                 self.delete_conn(addr, &mut callback)?;
+                self.gap.start_advertising()?;
             }
             GattsEvent::Write {
                 conn_id,
@@ -844,7 +852,7 @@ mod gatt_response {
     use esp_idf_svc::bt::ble::gatt::GattResponse;
     use esp_idf_svc::sys::{esp_gatt_rsp_t, esp_gatt_value_t};
 
-    use rs_matter::utils::init::{init, init_from_closure, zeroed, Init};
+    use rs_matter_stack::matter::utils::init::{init, init_from_closure, zeroed, Init};
 
     /// Return an in-place initializer for `GattResponse`.
     ///

@@ -29,6 +29,7 @@ Since ESP-IDF does support the Rust Standard Library, UDP networking just works.
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 #![allow(unexpected_cfgs)]
+#![recursion_limit = "256"]
 
 use core::pin::pin;
 
@@ -36,15 +37,19 @@ use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
 use esp_idf_matter::init_async_io;
-use esp_idf_matter::matter::data_model::cluster_basic_information::BasicInfoConfig;
-use esp_idf_matter::matter::data_model::cluster_on_off;
 use esp_idf_matter::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use esp_idf_matter::matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
-use esp_idf_matter::matter::data_model::system_model::descriptor;
+use esp_idf_matter::matter::data_model::objects::{
+    Async, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+};
+use esp_idf_matter::matter::data_model::on_off::{ClusterHandler as _, OnOffHandler};
+use esp_idf_matter::matter::data_model::system_model::desc::{
+    self, ClusterHandler as _, DescHandler,
+};
+use esp_idf_matter::matter::test_device::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use esp_idf_matter::matter::utils::init::InitMaybeUninit;
 use esp_idf_matter::matter::utils::select::Coalesce;
+use esp_idf_matter::matter::{clusters, devices};
 use esp_idf_matter::persist::EspKvBlobStore;
-use esp_idf_matter::stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 use esp_idf_matter::wireless::{EspMatterWifi, EspWifiMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -100,20 +105,8 @@ async fn matter() -> Result<(), anyhow::Error> {
     let stack = MATTER_STACK
         .uninit()
         .init_with(EspWifiMatterStack::init_default(
-            &BasicInfoConfig {
-                vid: TEST_VID,
-                pid: TEST_PID,
-                hw_ver: 2,
-                sw_ver: 1,
-                sw_ver_str: "1",
-                serial_no: "aabbccdd",
-                device_name: "MyLight",
-                product_name: "ACME Light",
-                vendor_name: "ACME",
-                sai: None,
-                sii: None,
-            },
-            TEST_BASIC_COMM_DATA,
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));
 
@@ -123,28 +116,23 @@ async fn matter() -> Result<(), anyhow::Error> {
     let nvs = EspDefaultNvsPartition::take()?;
     let peripherals = Peripherals::take()?;
 
-    // Our "light" on-off cluster.
-    // Can be anything implementing `rs_matter::data_model::AsyncHandler`
-    let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(stack.matter().rand()));
+    // Our "light" on-off handler.
+    // Can be anything implementing `Handler` or `AsyncHandler`
+    let on_off = OnOffHandler::new(Dataver::new_rand(stack.matter().rand())).adapt();
 
     // Chain our endpoint clusters with the
     // (root) Endpoint 0 system clusters in the final handler
-    let handler = stack
-        .root_handler()
+    let handler = EmptyHandler
         // Our on-off cluster, on Endpoint 1
         .chain(
-            LIGHT_ENDPOINT_ID,
-            cluster_on_off::ID,
-            HandlerCompat(&on_off),
+            EpClMatcher::new(Some(LIGHT_ENDPOINT_ID), Some(OnOffHandler::CLUSTER.id)),
+            Async(&on_off),
         )
         // Each Endpoint needs a Descriptor cluster too
         // Just use the one that `rs-matter` provides out of the box
         .chain(
-            LIGHT_ENDPOINT_ID,
-            descriptor::ID,
-            HandlerCompat(descriptor::DescriptorCluster::new(Dataver::new_rand(
-                stack.matter().rand(),
-            ))),
+            EpClMatcher::new(Some(LIGHT_ENDPOINT_ID), Some(DescHandler::CLUSTER.id)),
+            Async(desc::DescHandler::new(Dataver::new_rand(stack.matter().rand())).adapt()),
         );
 
     // Run the Matter stack with our handler
@@ -159,7 +147,7 @@ async fn matter() -> Result<(), anyhow::Error> {
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
-        core::future::pending(),
+        (),
     ));
 
     // Just for demoing purposes:
@@ -173,7 +161,7 @@ async fn matter() -> Result<(), anyhow::Error> {
             Timer::after(Duration::from_secs(5)).await;
 
             // Toggle
-            on_off.set(!on_off.get());
+            on_off.0.set(!on_off.0.get());
 
             // Let the Matter stack know that we have changed
             // the state of our Light device
@@ -202,11 +190,11 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EspWifiMatterStack::<()>::root_metadata(),
+        EspWifiMatterStack::<()>::root_endpoint(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(DescHandler::CLUSTER, OnOffHandler::CLUSTER),
         },
     ],
 };

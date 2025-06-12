@@ -1,3 +1,5 @@
+//! This module provides the ESP-IDF implementation of the Ethernet Matter stack.
+
 use rs_matter_stack::eth::Eth;
 use rs_matter_stack::MatterStack;
 

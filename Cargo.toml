@@ -28,6 +28,9 @@ rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "next" }
 #edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
+esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc" }
+esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal" }
+esp-idf-sys = { git = "https://github.com/esp-rs/esp-idf-sys" }
 
 [profile.release]
 opt-level = "s"

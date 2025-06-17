@@ -17,8 +17,8 @@ use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::netif::{EspNetif, IpEvent};
 use esp_idf_svc::sys::{esp, esp_netif_get_ip6_linklocal, EspError};
 
-use rs_matter_stack::matter::data_model::networks::NetChangeNotif;
-use rs_matter_stack::matter::data_model::sdm::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
+use rs_matter_stack::matter::dm::clusters::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
+use rs_matter_stack::matter::dm::networks::NetChangeNotif;
 use rs_matter_stack::matter::error::Error;
 use rs_matter_stack::matter::utils::sync::Notification;
 

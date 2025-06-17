@@ -7,7 +7,7 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
 
-use rs_matter_stack::matter::data_model::networks::wireless::Wifi;
+use rs_matter_stack::matter::dm::networks::wireless::Wifi;
 use rs_matter_stack::matter::error::Error;
 
 use rs_matter_stack::network::{Embedding, Network};

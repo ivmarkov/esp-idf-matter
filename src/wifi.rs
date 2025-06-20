@@ -18,15 +18,15 @@ use esp_idf_svc::wifi::{
     AsyncWifi, AuthMethod, ClientConfiguration, Configuration::Client, EspWifi,
 };
 
-use rs_matter_stack::matter::data_model::networks::NetChangeNotif;
-use rs_matter_stack::matter::data_model::sdm::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
-use rs_matter_stack::matter::data_model::sdm::net_comm::{
+use rs_matter_stack::matter::dm::clusters::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
+use rs_matter_stack::matter::dm::clusters::net_comm::{
     NetCtl, NetCtlError, NetworkScanInfo, NetworkType, WirelessCreds,
 };
-use rs_matter_stack::matter::data_model::sdm::net_comm::{WiFiBandEnum, WiFiSecurityBitmap};
-use rs_matter_stack::matter::data_model::sdm::wifi_diag::{
+use rs_matter_stack::matter::dm::clusters::net_comm::{WiFiBandEnum, WiFiSecurityBitmap};
+use rs_matter_stack::matter::dm::clusters::wifi_diag::{
     SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
 };
+use rs_matter_stack::matter::dm::networks::NetChangeNotif;
 use rs_matter_stack::matter::error::{Error, ErrorCode};
 use rs_matter_stack::matter::tlv::Nullable;
 

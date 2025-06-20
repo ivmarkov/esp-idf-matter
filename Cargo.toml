@@ -19,6 +19,7 @@ rust-version = "1.78"
 #[patch.'https://github.com/ivmarkov/async-io-mini']
 #async-io-mini = { path = "../async-io-mini" }
 #[patch.'https://github.com/ivmarkov/rs-matter-stack']
+#rs-matter-stack = { git = "https://github.com/ivmarkov//rs-matter-stack.git" }
 #rs-matter-stack = { path = "../rs-matter-stack" }
 
 [patch.crates-io]

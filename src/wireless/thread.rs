@@ -1,4 +1,4 @@
-use rs_matter_stack::matter::data_model::networks::wireless::Wifi;
+use rs_matter_stack::matter::dm::networks::wireless::Wifi;
 
 use super::EspWirelessMatterStack;
 

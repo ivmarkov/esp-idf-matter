@@ -15,13 +15,11 @@ use embassy_time::{Duration, Timer};
 
 use esp_idf_matter::eth::EspEthMatterStack;
 use esp_idf_matter::init_async_io;
-use esp_idf_matter::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use esp_idf_matter::matter::data_model::objects::{
-    Async, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
-};
-use esp_idf_matter::matter::data_model::on_off::{ClusterHandler as _, OnOffHandler};
-use esp_idf_matter::matter::data_model::system_model::desc::{ClusterHandler as _, DescHandler};
-use esp_idf_matter::matter::test_device::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use esp_idf_matter::matter::dm::clusters::desc::{ClusterHandler as _, DescHandler};
+use esp_idf_matter::matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
+use esp_idf_matter::matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use esp_idf_matter::matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
+use esp_idf_matter::matter::dm::{Async, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
 use esp_idf_matter::matter::utils::init::InitMaybeUninit;
 use esp_idf_matter::matter::utils::select::Coalesce;
 use esp_idf_matter::matter::{clusters, devices};

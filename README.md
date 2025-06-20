@@ -1,9 +1,9 @@
-# (WIP) Run [rs-matter](https://github.com/project-chip/rs-matter) on Espressif chips with [ESP IDF](https://github.com/esp-rs/esp-idf-svc)
+# ![alt text](https://avatars.githubusercontent.com/u/61027988?s=48&v=4 "esp-idf-matter") Run [rs-matter](https://github.com/project-chip/rs-matter) on Espressif chips with [ESP-IDF](https://github.com/esp-rs/esp-idf-svc)
 
 [![CI](https://github.com/ivmarkov/esp-idf-matter/actions/workflows/ci.yml/badge.svg)](https://github.com/ivmarkov/esp-idf-matter/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/esp-idf-matter.svg)](https://crates.io/crates/esp-idf-matter)
 [![Documentation](https://img.shields.io/badge/docs-esp--rs-brightgreen)](https://ivmarkov.github.io/esp-idf-matter/esp_idf_matter/index.html)
-[![Matrix](https://img.shields.io/matrix/ivmarkov:matrix.org?label=join%20matrix&color=BEC5C9&logo=matrix)](https://matrix.to/#/#esp-rs:matrix.org)
+[![Matrix](https://img.shields.io/matrix/matter-rs:matrix.org?label=join%20matrix&color=BEC5C9&logo=matrix)](https://matrix.to/#/#matter-rs:matrix.org)
 
 ## Overview
 
@@ -201,7 +201,7 @@ const NODE: Node = Node {
 * Thread networking (for ESP32H2 and ESP32C6)
 * Device Attestation data support using secure flash storage
 * Setting system time via Matter
-* Matter OTA support based on the ESP IDF OTA API
+* Matter OTA support based on the ESP-IDF OTA API
 
 ## Build Prerequisites
 

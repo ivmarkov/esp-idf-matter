@@ -23,7 +23,7 @@ use esp_idf_matter::matter::dm::{Async, Dataver, EmptyHandler, Endpoint, EpClMat
 use esp_idf_matter::matter::utils::init::InitMaybeUninit;
 use esp_idf_matter::matter::utils::select::Coalesce;
 use esp_idf_matter::matter::{clusters, devices};
-use esp_idf_matter::netif::{EspMatterNetif, EspMatterUdp};
+use esp_idf_matter::netif::{EspMatterNetStack, EspMatterNetif};
 use esp_idf_matter::persist::EspKvBlobStore;
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -139,7 +139,7 @@ async fn matter() -> Result<(), anyhow::Error> {
     let store = stack.create_shared_store(EspKvBlobStore::new_default(nvs)?);
     let mut matter = pin!(stack.run_preex(
         // The Matter stack needs UDP sockets to communicate with other Matter devices
-        EspMatterUdp::new(),
+        EspMatterNetStack::new(),
         // The Matter stack need access to the netif on which we'll operate
         // Since we are pretending to use a wired Ethernet connection - yet -
         // we are using a Wifi STA, provide the Wifi netif here

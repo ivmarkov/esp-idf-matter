@@ -15,7 +15,7 @@ use rs_matter_stack::wireless::{Gatt, GattTask, WifiCoex, WifiCoexTask, WifiTask
 
 use crate::ble::{EspBtpGattContext, EspBtpGattPeripheral};
 use crate::error::to_net_error;
-use crate::netif::EspMatterUdp;
+use crate::netif::EspMatterNetStack;
 use crate::wifi::EspSharedWifi;
 
 use super::{EspWirelessMatterStack, GATTS_APP_ID};
@@ -106,7 +106,7 @@ impl rs_matter_stack::wireless::Wifi for EspMatterWifi<'_, '_> {
 
         let wifi = EspSharedWifi::new(wifi, self.sysloop.clone());
 
-        task.run(EspMatterUdp::new(), &wifi, &wifi).await
+        task.run(EspMatterNetStack::new(), &wifi, &wifi).await
     }
 }
 
@@ -136,7 +136,7 @@ impl WifiCoex for EspMatterWifi<'_, '_> {
         let peripheral =
             EspBtpGattPeripheral::<bt::Ble>::new(GATTS_APP_ID, bt, self.ble_context).unwrap();
 
-        task.run(EspMatterUdp::new(), &wifi, &wifi, peripheral)
+        task.run(EspMatterNetStack::new(), &wifi, &wifi, peripheral)
             .await
     }
 }

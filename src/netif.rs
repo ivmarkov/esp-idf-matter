@@ -1,5 +1,5 @@
 //! This module provides the ESP-IDF implementation of the `Netif` trait for the Matter stack, as
-//! well as the `EspMatterUdp` type alias for a STD UDP stack which is based on `async-io` or `async-io-mini`.
+//! well as the `EspMatterNetStack` type alias for a STD stack which is based on `async-io` or `async-io-mini`.
 
 use core::borrow::Borrow;
 use core::net::{Ipv4Addr, Ipv6Addr};
@@ -26,8 +26,8 @@ use crate::error::to_net_error;
 
 const TIMEOUT_PERIOD_SECS: u8 = 5;
 
-/// A UDP stack for ESP-IDF
-pub type EspMatterUdp = edge_nal_std::Stack;
+/// A network stack for ESP-IDF
+pub type EspMatterNetStack = edge_nal_std::Stack;
 
 /// A `Netif` trait implementation for ESP-IDF
 pub struct EspMatterNetif<T> {

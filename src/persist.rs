@@ -5,7 +5,7 @@ use core::fmt::Write;
 use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsPartitionId};
 use esp_idf_svc::sys::EspError;
 
-use log::info;
+use log::{debug, trace};
 
 use rs_matter_stack::matter::error::Error;
 

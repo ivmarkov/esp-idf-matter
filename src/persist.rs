@@ -50,8 +50,9 @@ where
             .get_blob(Self::skey(&mut skey, key), buf)
             .map_err(to_persist_error)?;
 
-        info!(
-            "Blob {key}: loaded {:?} bytes {data:?}",
+        debug!("Blob {key}: loaded {:?} bytes", data.map(|data| data.len()));
+        trace!(
+            "Blob {key} load details: loaded {:?} bytes {data:?}",
             data.map(|data| data.len())
         );
 
@@ -73,7 +74,11 @@ where
             .set_blob(Self::skey(&mut skey, key), data)
             .map_err(to_persist_error)?;
 
-        info!("Blob {key}: stored {} bytes {data:?}", data.len());
+        debug!("Blob {key}: stored {} bytes", data.len());
+        trace!(
+            "Blob {key} store details: stored {} bytes {data:?}",
+            data.len()
+        );
 
         Ok(())
     }
@@ -87,7 +92,7 @@ where
             .remove(Self::skey(&mut skey, key))
             .map_err(to_persist_error)?;
 
-        info!("Blob {key}: removed");
+        debug!("Blob {key}: removed");
 
         Ok(())
     }

@@ -45,9 +45,9 @@ where
     }
 
     /// Get the network interface configuration
-    pub fn get_netif_conf<F>(netif: &EspNetif, f: F) -> Result<(), EspError>
+    pub fn get_netif_conf<F, R>(netif: &EspNetif, f: F) -> Result<R, EspError>
     where
-        F: FnOnce(&NetifInfo) -> Result<(), EspError>,
+        F: FnOnce(&NetifInfo) -> Result<R, EspError>,
     {
         let ip_info = netif.get_ip_info()?;
 

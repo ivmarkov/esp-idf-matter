@@ -2,10 +2,9 @@
 
 use core::cell::RefCell;
 use core::net::{Ipv4Addr, Ipv6Addr};
+use core::time::Duration;
 
 extern crate alloc;
-
-use alloc::sync::Arc;
 
 use embassy_sync::blocking_mutex::{self, raw::CriticalSectionRawMutex};
 use embassy_sync::mutex::Mutex;
@@ -29,44 +28,46 @@ use rs_matter_stack::matter::dm::clusters::wifi_diag::{
 use rs_matter_stack::matter::dm::networks::NetChangeNotif;
 use rs_matter_stack::matter::error::{Error, ErrorCode};
 use rs_matter_stack::matter::tlv::Nullable;
+use rs_matter_stack::matter::utils::sync::Notification;
 
 use crate::error::to_net_error;
 use crate::netif::EspMatterNetif;
 
 /// This type provides the ESP-IDF Wifi implementation of the Matter `NetCtl`, `NetChangeNotif`, `WirelessDiag`, and `WifiDiag` traits
 // TODO: Revert to `EspRawMutex` when `esp-idf-svc` is updated to `embassy-sync 0.7`
-#[derive(Clone)]
-pub struct EspSharedWifi<'a> {
-    wifi: Arc<Mutex<CriticalSectionRawMutex /*EspRawMutex*/, AsyncWifi<EspWifi<'a>>>>,
-    state: Arc<blocking_mutex::Mutex<CriticalSectionRawMutex /*EspRawMutex*/, RefCell<State>>>,
+pub struct EspMatterWifiCtl<'a> {
+    wifi: Mutex<CriticalSectionRawMutex /*EspRawMutex*/, AsyncWifi<EspWifi<'a>>>,
+    netif_state: blocking_mutex::Mutex<
+        CriticalSectionRawMutex, /*EspRawMutex*/
+        RefCell<NetifInfoOwned>,
+    >,
+    netif_state_changed: Notification<CriticalSectionRawMutex /*EspRawMutex*/>,
     sysloop: EspSystemEventLoop,
 }
 
-impl<'a> EspSharedWifi<'a> {
-    /// Create a new instance of the `EspSharedWifi` type.
-    pub fn new(wifi: AsyncWifi<EspWifi<'a>>, sysloop: EspSystemEventLoop) -> Self {
+impl<'a> EspMatterWifiCtl<'a> {
+    /// Create a new instance of the `EspMatterWifiCtl` type.
+    pub const fn new(wifi: AsyncWifi<EspWifi<'a>>, sysloop: EspSystemEventLoop) -> Self {
         Self {
-            wifi: Arc::new(Mutex::new(wifi)),
-            state: Arc::new(blocking_mutex::Mutex::new(RefCell::new(State::new()))),
+            wifi: Mutex::new(wifi),
+            netif_state: blocking_mutex::Mutex::new(RefCell::new(NetifInfoOwned::new())),
+            netif_state_changed: Notification::new(),
             sysloop,
         }
     }
 
     fn load(&self, wifi: &EspWifi<'_>) -> Result<(), EspError> {
-        EspMatterNetif::<EspNetif>::get_netif_conf(wifi.sta_netif(), |info| {
-            self.state.lock(|state| {
-                let mut state = state.borrow_mut();
-
-                state.netif_info.load(info);
-                state.connected = wifi.is_connected().unwrap();
-            });
+        self.netif_state.lock(|state| {
+            if state.borrow_mut().load(wifi)? {
+                self.netif_state_changed.notify();
+            }
 
             Ok(())
         })
     }
 }
 
-impl NetCtl for EspSharedWifi<'_> {
+impl NetCtl for EspMatterWifiCtl<'_> {
     fn net_type(&self) -> NetworkType {
         NetworkType::Wifi
     }
@@ -178,19 +179,32 @@ impl NetCtl for EspSharedWifi<'_> {
         })
         .map_err(to_net_error)?;
 
-        self.load(wifi.wifi()).map_err(to_net_error)?;
+        // Wait not just for the wireless interface to come up, but also for the
+        // IP addresses to be assigned.
+        wifi.ip_wait_while(
+            |wifi| {
+                self.netif_state.lock(|state| {
+                    let mut state = state.borrow_mut();
 
-        wifi.wait_netif_up()
-            .await
-            .map_err(|_| NetCtlError::IpBindFailed)?;
+                    let changed = state.load(wifi.wifi())?;
 
-        self.load(wifi.wifi()).map_err(to_net_error)?;
+                    if changed {
+                        self.netif_state_changed.notify();
+                    }
+
+                    Ok(!state.is_operational())
+                })
+            },
+            Some(Duration::from_secs(15)),
+        )
+        .await
+        .map_err(|_| NetCtlError::IpBindFailed)?;
 
         Ok(())
     }
 }
 
-impl NetChangeNotif for EspSharedWifi<'_> {
+impl NetChangeNotif for EspMatterWifiCtl<'_> {
     async fn wait_changed(&self) {
         let _ = self.load(self.wifi.lock().await.wifi());
 
@@ -200,21 +214,16 @@ impl NetChangeNotif for EspSharedWifi<'_> {
     }
 }
 
-impl WirelessDiag for EspSharedWifi<'_> {
+impl WirelessDiag for EspMatterWifiCtl<'_> {
     fn connected(&self) -> Result<bool, Error> {
-        Ok(self.state.lock(|state| {
-            let state = state.borrow();
-
-            state.connected
-                && state.netif_info.operational
-                && !state.netif_info.ipv4_addr.is_unspecified()
-                && !state.netif_info.ipv6_addr.is_unspecified()
-        }))
+        Ok(self
+            .netif_state
+            .lock(|state| state.borrow().is_operational()))
     }
 }
 
 // TODO
-impl WifiDiag for EspSharedWifi<'_> {
+impl WifiDiag for EspMatterWifiCtl<'_> {
     fn bssid(&self, f: &mut dyn FnMut(Option<&[u8]>) -> Result<(), Error>) -> Result<(), Error> {
         f(None)
     }
@@ -236,25 +245,32 @@ impl WifiDiag for EspSharedWifi<'_> {
     }
 }
 
-impl NetifDiag for EspSharedWifi<'_> {
+/// This type provides the ESP-IDF implementation of the Matter `NetifDiag` and `NetChangeNotif`
+pub struct EspMatterWifiNotif<'a, 'd>(&'a EspMatterWifiCtl<'d>);
+
+impl<'a, 'd> EspMatterWifiNotif<'a, 'd> {
+    /// Create a new instance of the `EspMatterWifiNotif` type.
+    pub const fn new(wifi: &'a EspMatterWifiCtl<'d>) -> Self {
+        Self(wifi)
+    }
+}
+
+impl NetifDiag for EspMatterWifiNotif<'_, '_> {
     fn netifs(&self, f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error> {
-        self.state.lock(|info| info.borrow().netif_info.as_ref(f))
+        self.0.netif_state.lock(|info| info.borrow().as_ref(f))
     }
 }
 
-#[derive(Debug)]
-struct State {
-    netif_info: NetifInfoOwned,
-    connected: bool,
+impl NetChangeNotif for EspMatterWifiNotif<'_, '_> {
+    async fn wait_changed(&self) {
+        self.0.netif_state_changed.wait().await;
+    }
 }
 
-impl State {
-    const fn new() -> Self {
-        Self {
-            netif_info: NetifInfoOwned::new(),
-            connected: false,
-        }
-    }
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct LoadOutcome {
+    pub operational: bool,
+    pub changed: bool,
 }
 
 #[derive(Debug)]
@@ -281,24 +297,56 @@ impl NetifInfoOwned {
         }
     }
 
-    fn load(&mut self, info: &NetifInfo<'_>) {
+    fn is_operational(&self) -> bool {
+        self.operational && !self.ipv4_addr.is_unspecified() && !self.ipv6_addr.is_unspecified()
+    }
+
+    fn load(&mut self, wifi: &EspWifi<'_>) -> Result<bool, EspError> {
+        EspMatterNetif::<EspNetif>::get_netif_conf(wifi.sta_netif(), |info| {
+            Ok(self.load_from_info(wifi.is_connected().unwrap_or(false), info))
+        })
+    }
+
+    fn load_from_info(&mut self, connected: bool, info: &NetifInfo<'_>) -> bool {
         let hw_addr: &[u8] = info.hw_addr;
 
-        self.name = info.name.try_into().unwrap();
-        self.operational = info.operational;
-        self.hw_addr = hw_addr.try_into().unwrap();
-        self.ipv4_addr = if info.ipv4_addrs.is_empty() {
-            Ipv4Addr::UNSPECIFIED
-        } else {
-            info.ipv4_addrs[0]
-        };
-        self.ipv6_addr = if info.ipv6_addrs.is_empty() {
-            Ipv6Addr::UNSPECIFIED
-        } else {
-            info.ipv6_addrs[0]
-        };
-        self.netif_type = info.netif_type;
-        self.netif_index = info.netif_index;
+        let changed = self.name != info.name
+            || self.operational != info.operational && connected
+            || self.hw_addr != hw_addr
+            || self.ipv4_addr
+                != info
+                    .ipv4_addrs
+                    .first()
+                    .copied()
+                    .unwrap_or(Ipv4Addr::UNSPECIFIED)
+            || self.ipv6_addr
+                != info
+                    .ipv6_addrs
+                    .first()
+                    .copied()
+                    .unwrap_or(Ipv6Addr::UNSPECIFIED)
+            || self.netif_type != info.netif_type
+            || self.netif_index != info.netif_index;
+
+        if changed {
+            self.name = info.name.try_into().unwrap();
+            self.operational = info.operational && connected;
+            self.hw_addr = hw_addr.try_into().unwrap();
+            self.ipv4_addr = if info.ipv4_addrs.is_empty() {
+                Ipv4Addr::UNSPECIFIED
+            } else {
+                info.ipv4_addrs[0]
+            };
+            self.ipv6_addr = if info.ipv6_addrs.is_empty() {
+                Ipv6Addr::UNSPECIFIED
+            } else {
+                info.ipv6_addrs[0]
+            };
+            self.netif_type = info.netif_type;
+            self.netif_index = info.netif_index;
+        }
+
+        changed
     }
 
     fn as_ref<F>(&self, f: F) -> Result<(), Error>

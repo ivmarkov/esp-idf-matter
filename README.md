@@ -45,7 +45,6 @@ use esp_idf_matter::matter::dm::{Async, Dataver, EmptyHandler, Endpoint, EpClMat
 use esp_idf_matter::matter::utils::init::InitMaybeUninit;
 use esp_idf_matter::matter::utils::select::Coalesce;
 use esp_idf_matter::matter::{clusters, devices};
-use esp_idf_matter::persist::EspKvBlobStore;
 use esp_idf_matter::wireless::{EspMatterWifi, EspWifiMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -134,7 +133,12 @@ async fn matter() -> Result<(), anyhow::Error> {
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
-    let store = stack.create_shared_store(EspKvBlobStore::new_default(nvs.clone())?);
+    //
+    // NOTE: When testing initially, use the `DummyKVBlobStore` to make sure device
+    // commissioning works fine with your controller. Once you confirm, you can enable
+    // the `EspKvBlobStore` to persist the Matter state in NVS.
+    // let store = stack.create_shared_store(esp_idf_matter::persist::EspKvBlobStore::new_default(nvs.clone())?);
+    let store = stack.create_shared_store(rs_matter_stack::persist::DummyKvBlobStore);
     let mut matter = pin!(stack.run(
         // The Matter stack needs the Wifi/BLE modem peripheral
         EspMatterWifi::new(peripherals.modem, sysloop, timers, nvs, stack),

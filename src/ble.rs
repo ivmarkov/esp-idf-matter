@@ -782,8 +782,12 @@ where
                     }
                 }
             } else if c1_handle == Some(handle) && offset == 0 {
+                let address = BtAddr(addr.into());
+
+                trace!("Got {} bytes to {address}", value.len());
+
                 return Some(GattPeripheralEvent::Write {
-                    address: BtAddr(addr.into()),
+                    address,
                     data: value,
                     gatt_mtu: conn.mtu,
                 });

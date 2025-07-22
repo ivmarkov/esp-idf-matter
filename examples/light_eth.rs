@@ -37,6 +37,7 @@ use esp_idf_svc::wifi::{self, AsyncWifi, EspWifi};
 
 use log::{error, info};
 
+use rs_matter_stack::mdns::BuiltinMdns;
 use static_cell::StaticCell;
 
 const WIFI_SSID: &str = env!("WIFI_SSID");
@@ -148,6 +149,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         // Since we are pretending to use a wired Ethernet connection - yet -
         // we are using a Wifi STA, provide the Wifi netif here
         EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
+        // The Matter stack needs a mDNS service to advertise itself
+        BuiltinMdns,
         // The Matter stack needs a persister to store its state
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl

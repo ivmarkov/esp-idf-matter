@@ -10,6 +10,7 @@ use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
 use rs_matter_stack::matter::dm::networks::wireless::Wifi;
 use rs_matter_stack::matter::error::Error;
 
+use rs_matter_stack::mdns::BuiltinMdns;
 use rs_matter_stack::network::{Embedding, Network};
 use rs_matter_stack::wireless::{Gatt, GattTask, WifiCoex, WifiCoexTask, WifiTask};
 
@@ -110,6 +111,7 @@ impl rs_matter_stack::wireless::Wifi for EspMatterWifi<'_, '_> {
             EspMatterNetStack::new(),
             EspMatterWifiNotif::new(&wifi),
             &wifi,
+            BuiltinMdns,
         )
         .await
     }
@@ -138,14 +140,15 @@ impl WifiCoex for EspMatterWifi<'_, '_> {
 
         let bt = BtDriver::new(bt_p, Some(self.nvs.clone())).unwrap();
 
-        let peripheral =
+        let mut peripheral =
             EspBtpGattPeripheral::<bt::Ble>::new(GATTS_APP_ID, bt, self.ble_context).unwrap();
 
         task.run(
             EspMatterNetStack::new(),
             EspMatterWifiNotif::new(&wifi),
             &wifi,
-            peripheral,
+            BuiltinMdns,
+            &mut peripheral,
         )
         .await
     }

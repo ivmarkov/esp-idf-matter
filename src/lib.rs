@@ -40,6 +40,12 @@ pub mod netif;
 pub mod persist;
 pub mod stack;
 #[cfg(all(
+    esp_idf_comp_openthread_enabled,
+    esp_idf_openthread_enabled,
+    esp_idf_comp_vfs_enabled,
+))]
+pub mod thread;
+#[cfg(all(
     not(esp32h2),
     not(esp32s2),
     esp_idf_comp_esp_wifi_enabled,

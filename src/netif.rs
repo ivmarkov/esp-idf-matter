@@ -161,3 +161,108 @@ where
         self.wait_conf_change().await.unwrap();
     }
 }
+
+#[derive(Debug)]
+pub(crate) struct NetifInfoOwned {
+    name: heapless::String<6>,
+    operational: bool,
+    hw_addr: [u8; 8],
+    ipv4_addr: Ipv4Addr,
+    ipv6_addr: Ipv6Addr,
+    netif_type: InterfaceTypeEnum,
+    netif_index: u32,
+}
+
+impl NetifInfoOwned {
+    pub(crate) const fn new() -> Self {
+        Self {
+            name: heapless::String::new(),
+            operational: false,
+            hw_addr: [0; 8],
+            ipv4_addr: Ipv4Addr::UNSPECIFIED,
+            ipv6_addr: Ipv6Addr::UNSPECIFIED,
+            netif_type: InterfaceTypeEnum::WiFi,
+            netif_index: 0,
+        }
+    }
+
+    pub(crate) fn is_operational(&self) -> bool {
+        self.operational && !self.ipv4_addr.is_unspecified() && !self.ipv6_addr.is_unspecified()
+    }
+
+    pub(crate) fn load(&mut self, l2_connected: bool, netif: &EspNetif) -> Result<bool, EspError> {
+        EspMatterNetif::<EspNetif>::get_netif_conf(netif, |info| {
+            Ok(self.load_from_info(l2_connected, info))
+        })
+    }
+
+    fn load_from_info(&mut self, l2_connected: bool, info: &NetifInfo<'_>) -> bool {
+        let hw_addr: &[u8] = info.hw_addr;
+
+        let changed = self.name != info.name
+            || self.operational != info.operational && l2_connected
+            || self.hw_addr != hw_addr
+            || self.ipv4_addr
+                != info
+                    .ipv4_addrs
+                    .first()
+                    .copied()
+                    .unwrap_or(Ipv4Addr::UNSPECIFIED)
+            || self.ipv6_addr
+                != info
+                    .ipv6_addrs
+                    .first()
+                    .copied()
+                    .unwrap_or(Ipv6Addr::UNSPECIFIED)
+            || self.netif_type != info.netif_type
+            || self.netif_index != info.netif_index;
+
+        if changed {
+            self.name = info.name.try_into().unwrap();
+            self.operational = info.operational && l2_connected;
+            self.hw_addr = hw_addr.try_into().unwrap();
+            self.ipv4_addr = if info.ipv4_addrs.is_empty() {
+                Ipv4Addr::UNSPECIFIED
+            } else {
+                info.ipv4_addrs[0]
+            };
+            self.ipv6_addr = if info.ipv6_addrs.is_empty() {
+                Ipv6Addr::UNSPECIFIED
+            } else {
+                info.ipv6_addrs[0]
+            };
+            self.netif_type = info.netif_type;
+            self.netif_index = info.netif_index;
+        }
+
+        changed
+    }
+
+    pub(crate) fn as_ref<F>(&self, f: F) -> Result<(), Error>
+    where
+        F: FnOnce(&NetifInfo<'_>) -> Result<(), Error>,
+    {
+        let ipv4_addrs = [self.ipv4_addr];
+        let ipv6_addrs = [self.ipv6_addr];
+
+        f(&NetifInfo {
+            name: &self.name,
+            operational: self.operational,
+            hw_addr: &self.hw_addr,
+            ipv4_addrs: if self.ipv4_addr.is_unspecified() {
+                &[]
+            } else {
+                &ipv4_addrs
+            },
+            ipv6_addrs: if self.ipv6_addr.is_unspecified() {
+                &[]
+            } else {
+                &ipv6_addrs
+            },
+            netif_type: self.netif_type,
+            offprem_svc_reachable_ipv4: None,
+            offprem_svc_reachable_ipv6: None,
+            netif_index: self.netif_index,
+        })
+    }
+}

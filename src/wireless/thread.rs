@@ -28,7 +28,9 @@ extern crate alloc;
 /// A type alias for an ESP-IDF Matter stack running over Thread (and BLE, during commissioning).
 pub type EspThreadMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread, E>;
 
-/// A `Wifi` trait implementation via ESP-IDF's Wifi/BT modem
+/// A `Thread` trait implementation via ESP-IDF's Thread/BT modem
+// TODO: mDNS via Thread (SRP)
+// TODO: How to run the openthread event loop
 pub struct EspMatterThread<'a, 'd> {
     modem: PeripheralRef<'d, Modem>,
     sysloop: EspSystemEventLoop,

@@ -10,7 +10,7 @@ use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
 use rs_matter_stack::matter::dm::networks::wireless::Wifi;
 use rs_matter_stack::matter::error::Error;
 
-use rs_matter_stack::mdns::BuiltinMdns;
+use rs_matter_stack::mdns::{BuiltinMdns, Mdns};
 use rs_matter_stack::network::{Embedding, Network};
 use rs_matter_stack::wireless::{Gatt, GattTask, WifiCoex, WifiCoexTask, WifiTask};
 
@@ -25,17 +25,18 @@ use super::{EspWirelessMatterStack, GATTS_APP_ID};
 pub type EspWifiMatterStack<'a, E> = EspWirelessMatterStack<'a, Wifi, E>;
 
 /// A `Wifi` trait implementation via ESP-IDF's Wifi/BT modem
-pub struct EspMatterWifi<'a, 'd> {
+pub struct EspMatterWifi<'a, 'd, M = BuiltinMdns> {
     modem: PeripheralRef<'d, Modem>,
     sysloop: EspSystemEventLoop,
     timer: EspTaskTimerService,
     nvs: EspDefaultNvsPartition,
+    mdns: M,
     ble_context: &'a EspBtpGattContext,
 }
 
-impl<'a, 'd> EspMatterWifi<'a, 'd> {
-    /// Create a new instance of the `EspMatterWifi` type.
-    pub fn new<E>(
+impl<'a, 'd> EspMatterWifi<'a, 'd, BuiltinMdns> {
+    /// Create a new instance of the `EspMatterWifi` type .
+    pub fn new_with_builtin_mdns<E>(
         modem: impl Peripheral<P = Modem> + 'd,
         sysloop: EspSystemEventLoop,
         timer: EspTaskTimerService,
@@ -45,11 +46,32 @@ impl<'a, 'd> EspMatterWifi<'a, 'd> {
     where
         E: Embedding + 'static,
     {
+        Self::new(modem, sysloop, timer, nvs, stack, BuiltinMdns)
+    }
+}
+
+impl<'a, 'd, M> EspMatterWifi<'a, 'd, M>
+where
+    M: Mdns,
+{
+    /// Create a new instance of the `EspMatterWifi` type.
+    pub fn new<E>(
+        modem: impl Peripheral<P = Modem> + 'd,
+        sysloop: EspSystemEventLoop,
+        timer: EspTaskTimerService,
+        nvs: EspDefaultNvsPartition,
+        stack: &'a EspWifiMatterStack<E>,
+        mdns: M,
+    ) -> Self
+    where
+        E: Embedding + 'static,
+    {
         Self::wrap(
             modem,
             sysloop,
             timer,
             nvs,
+            mdns,
             stack.network().embedding().context(),
         )
     }
@@ -60,6 +82,7 @@ impl<'a, 'd> EspMatterWifi<'a, 'd> {
         sysloop: EspSystemEventLoop,
         timer: EspTaskTimerService,
         nvs: EspDefaultNvsPartition,
+        mdns: M,
         ble_context: &'a EspBtpGattContext,
     ) -> Self {
         into_ref!(modem);
@@ -69,6 +92,7 @@ impl<'a, 'd> EspMatterWifi<'a, 'd> {
             sysloop,
             timer,
             nvs,
+            mdns,
             ble_context,
         }
     }
@@ -111,7 +135,7 @@ impl rs_matter_stack::wireless::Wifi for EspMatterWifi<'_, '_> {
             EspMatterNetStack::new(),
             EspMatterWifiNotif::new(&wifi),
             &wifi,
-            BuiltinMdns,
+            &mut self.mdns,
         )
         .await
     }
@@ -147,7 +171,7 @@ impl WifiCoex for EspMatterWifi<'_, '_> {
             EspMatterNetStack::new(),
             EspMatterWifiNotif::new(&wifi),
             &wifi,
-            BuiltinMdns,
+            &mut self.mdns,
             &mut peripheral,
         )
         .await

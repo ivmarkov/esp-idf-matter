@@ -141,7 +141,7 @@ async fn matter() -> Result<(), anyhow::Error> {
     let store = stack.create_shared_store(rs_matter_stack::persist::DummyKvBlobStore);
     let mut matter = pin!(stack.run(
         // The Matter stack needs the Wifi/BLE modem peripheral
-        EspMatterWifi::new(peripherals.modem, sysloop, timers, nvs, stack),
+        EspMatterWifi::new_with_builtin_mdns(peripherals.modem, sysloop, timers, nvs, stack),
         // The Matter stack needs a persister to store its state
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl

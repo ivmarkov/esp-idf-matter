@@ -15,7 +15,7 @@ use embassy_time::{Duration, Timer};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::netif::{EspNetif, IpEvent};
-use esp_idf_svc::sys::{esp, esp_netif_get_ip6_linklocal, EspError};
+use esp_idf_svc::sys::{esp_ip6_addr_t, esp_netif_get_all_ip6, EspError, LWIP_IPV6_NUM_ADDRESSES};
 
 use rs_matter_stack::matter::dm::clusters::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
 use rs_matter_stack::matter::dm::networks::NetChangeNotif;
@@ -57,9 +57,14 @@ where
         // }
 
         let ipv6 = {
-            let mut ipv6: esp_idf_svc::sys::esp_ip6_addr_t = Default::default();
-            if esp!(unsafe { esp_netif_get_ip6_linklocal(netif.handle() as _, &mut ipv6) }).is_ok()
-            {
+            let mut ipv6: [esp_ip6_addr_t; LWIP_IPV6_NUM_ADDRESSES as usize] = Default::default();
+            let count = unsafe { esp_netif_get_all_ip6(netif.handle() as _, ipv6.as_mut_ptr()) };
+
+            if count > 0 {
+                // TODO: Choose a non-local IPv6 address if available
+
+                let ipv6 = &ipv6[count as usize - 1];
+
                 [
                     ipv6.addr[0].to_le_bytes()[0],
                     ipv6.addr[0].to_le_bytes()[1],
@@ -89,7 +94,7 @@ where
 
         f(&NetifInfo {
             name: &netif.get_name(),
-            operational: netif.is_up()?,
+            operational: netif.is_netif_up()?,
             offprem_svc_reachable_ipv4: None,
             offprem_svc_reachable_ipv6: None,
             hw_addr: &mac,
@@ -158,7 +163,7 @@ where
     T: Borrow<EspNetif>,
 {
     async fn wait_changed(&self) {
-        self.wait_conf_change().await.unwrap();
+        let _ = self.wait_conf_change().await;
     }
 }
 
@@ -187,7 +192,11 @@ impl NetifInfoOwned {
     }
 
     pub(crate) fn is_operational(&self) -> bool {
-        self.operational && !self.ipv4_addr.is_unspecified() && !self.ipv6_addr.is_unspecified()
+        self.is_operational_v6() && !self.ipv4_addr.is_unspecified()
+    }
+
+    pub(crate) fn is_operational_v6(&self) -> bool {
+        self.operational && !self.ipv6_addr.is_unspecified()
     }
 
     pub(crate) fn load(&mut self, l2_connected: bool, netif: &EspNetif) -> Result<bool, EspError> {

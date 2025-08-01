@@ -79,11 +79,9 @@ pub mod wireless;
 #[inline(never)]
 #[cold]
 #[cfg(feature = "std")]
-pub fn init_async_io() -> Result<(), esp_idf_svc::sys::EspError> {
-    // We'll use `async-io(-mini)` for networking, so ESP IDF VFS needs to be initialized
-    // esp_idf_svc::io::vfs::initialize_eventfd(3)?;
-    core::mem::forget(esp_idf_svc::io::vfs::MountedEventfs::mount(3));
-
+pub fn init_async_io(
+    _mounted_event_fs: alloc::sync::Arc<esp_idf_svc::io::vfs::MountedEventfs>,
+) -> Result<(), esp_idf_svc::sys::EspError> {
     esp_idf_svc::hal::task::block_on(init_async_io_async());
 
     Ok(())
@@ -92,7 +90,7 @@ pub fn init_async_io() -> Result<(), esp_idf_svc::sys::EspError> {
 #[inline(never)]
 #[cold]
 #[cfg(feature = "std")]
-async fn init_async_io_async() {
+pub async fn init_async_io_async() {
     #[cfg(not(feature = "async-io-mini"))]
     {
         // Force the `async-io` lazy initialization to trigger earlier rather than later,

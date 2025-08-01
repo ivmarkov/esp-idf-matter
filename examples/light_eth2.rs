@@ -2,8 +2,8 @@
 //! As the name suggests, this Matter stack assembly uses Ethernet as the main transport, as well as for commissioning.
 //!
 //! Notice thart we actually don't use Ethernet for real, as ESP32s don't have Ethernet ports out of the box.
-//! Instead, we utilize Wifi, which - from the POV of Matter - is indistinguishable from Ethernet as long as the Matter
-//! stack is not concerned with connecting to the Wifi network, managing its credentials etc. and can assume it "pre-exists".
+//! Instead, we utilize Thread, which - from the POV of Matter - is indistinguishable from Ethernet as long as the Matter
+//! stack is not concerned with connecting to the Thread network, managing its credentials etc. and can assume it "pre-exists".
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 #![allow(unexpected_cfgs)]
@@ -27,26 +27,22 @@ use esp_idf_matter::matter::utils::select::Coalesce;
 use esp_idf_matter::matter::{clusters, devices};
 use esp_idf_matter::netif::{EspMatterNetStack, EspMatterNetif};
 
+use esp_idf_matter::thread::EspMatterThreadSrp;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::task::block_on;
-use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::io::vfs::MountedEventfs;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::sys::{esp, esp_netif_create_ip6_linklocal};
-use esp_idf_svc::timer::EspTaskTimerService;
-use esp_idf_svc::wifi::{self, AsyncWifi, EspWifi};
+use esp_idf_svc::thread::EspThread;
 
 use log::{error, info};
 
-use rs_matter_stack::mdns::BuiltinMdns;
 use static_cell::StaticCell;
 
 extern crate alloc;
 
-const WIFI_SSID: &str = env!("WIFI_SSID");
-const WIFI_PASS: &str = env!("WIFI_PASS");
+const THREAD_DATASET: &str = env!("THREAD_DATASET");
 
 fn main() -> Result<(), anyhow::Error> {
     EspLogger::initialize_default();
@@ -95,27 +91,34 @@ async fn matter() -> Result<(), anyhow::Error> {
     let nvs = EspDefaultNvsPartition::take()?;
     let peripherals = Peripherals::take()?;
 
-    let mounted_event_fs = Arc::new(MountedEventfs::mount(3)?);
-    init_async_io(mounted_event_fs)?;
+    let mounted_event_fs = Arc::new(MountedEventfs::mount(6)?);
+    init_async_io(mounted_event_fs.clone())?;
 
-    // Configure and start the Wifi first
-    let mut wifi = Box::new(AsyncWifi::wrap(
-        EspWifi::new(peripherals.modem, sysloop.clone(), Some(nvs.clone()))?,
+    // Configure and start Thread first
+    let mut thread = EspThread::new(
+        peripherals.modem,
         sysloop.clone(),
-        EspTaskTimerService::new()?,
-    )?);
-    wifi.set_configuration(&wifi::Configuration::Client(wifi::ClientConfiguration {
-        ssid: WIFI_SSID.try_into().unwrap(),
-        password: WIFI_PASS.try_into().unwrap(),
-        ..Default::default()
-    }))?;
-    wifi.start().await?;
-    wifi.connect().await?;
+        nvs.clone(),
+        mounted_event_fs,
+    )?;
 
-    // Matter needs an IPv6 address to work
-    esp!(unsafe { esp_netif_create_ip6_linklocal(wifi.wifi().sta_netif().handle() as _) })?;
+    info!("Thread driver created");
 
-    wifi.wait_netif_up().await?;
+    thread.set_tod_hexstr(THREAD_DATASET)?;
+
+    info!("Thread dataset set to: {THREAD_DATASET}");
+
+    thread.enable_ipv6(true)?;
+
+    info!("Thread IPv6 enabled");
+
+    thread.enable_thread(true)?;
+
+    info!("Thread enabled");
+
+    thread.start()?;
+
+    info!("Thread started");
 
     // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
@@ -150,10 +153,10 @@ async fn matter() -> Result<(), anyhow::Error> {
         EspMatterNetStack::new(),
         // The Matter stack need access to the netif on which we'll operate
         // Since we are pretending to use a wired Ethernet connection - yet -
-        // we are using a Wifi STA, provide the Wifi netif here
-        EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
+        // we are using Thread, provide the Thread netif here
+        EspMatterNetif::new(thread.netif(), sysloop),
         // The Matter stack needs an mDNS service to advertise itself
-        BuiltinMdns,
+        EspMatterThreadSrp::new(&thread),
         // The Matter stack needs a persister to store its state
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl

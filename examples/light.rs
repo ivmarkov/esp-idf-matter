@@ -13,6 +13,8 @@
 
 use core::pin::pin;
 
+use alloc::sync::Arc;
+
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
@@ -30,6 +32,7 @@ use esp_idf_matter::wireless::{EspMatterWifi, EspWifiMatterStack};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::task::block_on;
+use esp_idf_svc::io::vfs::MountedEventfs;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
@@ -37,6 +40,8 @@ use esp_idf_svc::timer::EspTaskTimerService;
 use log::{error, info};
 
 use static_cell::StaticCell;
+
+extern crate alloc;
 
 fn main() -> Result<(), anyhow::Error> {
     EspLogger::initialize_default();
@@ -48,12 +53,7 @@ fn main() -> Result<(), anyhow::Error> {
     // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
         .stack_size(85 * 1024)
-        .spawn(|| {
-            // Eagerly initialize `async-io` to minimize the risk of stack blowups later on
-            init_async_io()?;
-
-            run()
-        })
+        .spawn(run)
         .unwrap();
 
     thread.join().unwrap()
@@ -90,6 +90,9 @@ async fn matter() -> Result<(), anyhow::Error> {
     let timers = EspTaskTimerService::new()?;
     let nvs = EspDefaultNvsPartition::take()?;
     let peripherals = Peripherals::take()?;
+
+    let mounted_event_fs = Arc::new(MountedEventfs::mount(3)?);
+    init_async_io(mounted_event_fs)?;
 
     // Our "light" on-off handler.
     // Can be anything implementing `Handler` or `AsyncHandler`

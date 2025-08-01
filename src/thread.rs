@@ -1,6 +1,7 @@
 //! This module provides the ESP-IDF Thread implementation of the Matter `NetCtl`, `NetChangeNotif`, `WirelessDiag`, and `ThreadDiag` traits.
 
 use core::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 use alloc::sync::Arc;
 
@@ -10,7 +11,11 @@ use embassy_sync::mutex::Mutex;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::netif::EspNetif;
 use esp_idf_svc::sys::EspError;
-use esp_idf_svc::thread::{ActiveScanResult, EspThread, NetifMode, Role};
+use esp_idf_svc::thread::{
+    ActiveScanResult, EspThread, NetifMode, Role, SrpConf, SrpService, SrpServiceSlot,
+};
+
+use log::info;
 
 use rs_matter_stack::matter::dm::clusters::gen_diag::{NetifDiag, NetifInfo};
 use rs_matter_stack::matter::dm::clusters::net_comm::{
@@ -23,7 +28,10 @@ use rs_matter_stack::matter::dm::clusters::thread_diag::{
 use rs_matter_stack::matter::dm::clusters::wifi_diag::WirelessDiag;
 use rs_matter_stack::matter::dm::networks::NetChangeNotif;
 use rs_matter_stack::matter::error::{Error, ErrorCode};
+use rs_matter_stack::matter::transport::network::mdns::Service;
 use rs_matter_stack::matter::utils::sync::Notification;
+use rs_matter_stack::matter::{Matter, MatterMdnsService};
+use rs_matter_stack::mdns::Mdns;
 
 use crate::error::to_net_error;
 use crate::netif::{EspMatterNetif, NetifInfoOwned};
@@ -32,11 +40,11 @@ extern crate alloc;
 
 /// This type provides the ESP-IDF Thread implementation of the Matter `NetCtl`, `NetChangeNotif`, `WirelessDiag`, and `ThreadDiag` traits
 // TODO: Revert to `EspRawMutex` when `esp-idf-svc` is updated to `embassy-sync 0.7`
-pub struct EspMatterThreadCtl<'a, M>
+pub struct EspMatterThreadCtl<'a, 'd, M>
 where
     M: NetifMode,
 {
-    thread: Mutex<CriticalSectionRawMutex /*EspRawMutex*/, EspThread<'a, M>>,
+    thread: Mutex<CriticalSectionRawMutex /*EspRawMutex*/, &'a EspThread<'d, M>>,
     netif_state: blocking_mutex::Mutex<
         CriticalSectionRawMutex, /*EspRawMutex*/
         RefCell<NetifInfoOwned>,
@@ -45,12 +53,12 @@ where
     sysloop: EspSystemEventLoop,
 }
 
-impl<'a, M> EspMatterThreadCtl<'a, M>
+impl<'a, 'd, M> EspMatterThreadCtl<'a, 'd, M>
 where
     M: NetifMode,
 {
     /// Create a new instance of the `EspMatterThreadCtl` type.
-    pub const fn new(thread: EspThread<'a, M>, sysloop: EspSystemEventLoop) -> Self {
+    pub const fn new(thread: &'a EspThread<'d, M>, sysloop: EspSystemEventLoop) -> Self {
         Self {
             thread: Mutex::new(thread),
             netif_state: blocking_mutex::Mutex::new(RefCell::new(NetifInfoOwned::new())),
@@ -77,7 +85,7 @@ where
     }
 }
 
-impl<M> NetCtl for EspMatterThreadCtl<'_, M>
+impl<M> NetCtl for EspMatterThreadCtl<'_, '_, M>
 where
     M: NetifMode,
 {
@@ -200,8 +208,8 @@ where
     }
 
     async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
-        const CONNECT_WAIT: embassy_time::Duration = embassy_time::Duration::from_millis(20000);
-        const POLL_CONNECT_WAIT: embassy_time::Duration = embassy_time::Duration::from_millis(500);
+        const CONNECT_WAIT: embassy_time::Duration = embassy_time::Duration::from_millis(30000);
+        const POLL_CONNECT_WAIT: embassy_time::Duration = embassy_time::Duration::from_millis(1000);
 
         let WirelessCreds::Thread { dataset_tlv } = creds else {
             return Err(NetCtlError::Other(ErrorCode::InvalidData.into()));
@@ -222,13 +230,13 @@ where
                     let mut state = state.borrow_mut();
 
                     let changed =
-                        state.load(Self::is_thread_connected(&*thread)?, thread.netif())?;
+                        state.load(Self::is_thread_connected(*thread)?, thread.netif())?;
 
                     if changed {
                         self.netif_state_changed.notify();
                     }
 
-                    Result::<_, EspError>::Ok(!state.is_operational())
+                    Result::<_, EspError>::Ok(state.is_operational_v6())
                 })
                 .map_err(to_net_error)?;
 
@@ -247,32 +255,32 @@ where
     }
 }
 
-impl<M> NetChangeNotif for EspMatterThreadCtl<'_, M>
+impl<M> NetChangeNotif for EspMatterThreadCtl<'_, '_, M>
 where
     M: NetifMode,
 {
     async fn wait_changed(&self) {
-        let _ = self.load(&*self.thread.lock().await);
+        let _ = self.load(*self.thread.lock().await);
 
         let _ = EspMatterNetif::<EspNetif>::wait_any_conf_change(&self.sysloop).await;
 
-        let _ = self.load(&*self.thread.lock().await);
+        let _ = self.load(*self.thread.lock().await);
     }
 }
 
-impl<M> WirelessDiag for EspMatterThreadCtl<'_, M>
+impl<M> WirelessDiag for EspMatterThreadCtl<'_, '_, M>
 where
     M: NetifMode,
 {
     fn connected(&self) -> Result<bool, Error> {
         Ok(self
             .netif_state
-            .lock(|state| state.borrow().is_operational()))
+            .lock(|state| state.borrow().is_operational_v6()))
     }
 }
 
 // TODO
-impl<M> ThreadDiag for EspMatterThreadCtl<'_, M>
+impl<M> ThreadDiag for EspMatterThreadCtl<'_, '_, M>
 where
     M: NetifMode,
 {
@@ -367,7 +375,7 @@ where
 }
 
 /// This type provides the ESP-IDF Thread implementation of the Matter `NetifDiag` and `NetChangeNotif`
-pub struct EspMatterThreadNotif<'a, 'd, M>(&'a EspMatterThreadCtl<'d, M>)
+pub struct EspMatterThreadNotif<'a, 'd, M>(&'a EspMatterThreadCtl<'a, 'd, M>)
 where
     M: NetifMode;
 
@@ -376,7 +384,7 @@ where
     M: NetifMode,
 {
     /// Create a new instance of the `EspMatterThreadNotif` type.
-    pub const fn new(thread: &'a EspMatterThreadCtl<'d, M>) -> Self {
+    pub const fn new(thread: &'a EspMatterThreadCtl<'a, 'd, M>) -> Self {
         Self(thread)
     }
 }
@@ -396,6 +404,148 @@ where
 {
     async fn wait_changed(&self) {
         self.0.netif_state_changed.wait().await;
+    }
+}
+
+pub struct EspMatterThreadSrp<'a, 'd, M>
+where
+    M: NetifMode,
+{
+    thread: &'a EspThread<'d, M>,
+    services: HashMap<MatterMdnsService, SrpServiceSlot>,
+}
+
+impl<'a, 'd, M> EspMatterThreadSrp<'a, 'd, M>
+where
+    M: NetifMode,
+{
+    /// Create a new instance of the `EspMatterThreadSrp` type.
+    pub fn new(thread: &'a EspThread<'d, M>) -> Self {
+        Self {
+            thread,
+            services: HashMap::new(),
+        }
+    }
+
+    pub async fn run(
+        &mut self,
+        matter: &Matter<'_>,
+        _ipv6: core::net::Ipv6Addr,
+    ) -> Result<(), Error> {
+        self.thread
+            .srp_set_conf(&SrpConf {
+                host_name: "foo", // TODO
+                host_addrs: &[],
+                ..Default::default()
+            })
+            .map_err(to_net_error)?;
+
+        loop {
+            matter.wait_mdns().await;
+
+            let mut services = HashSet::new();
+            matter.mdns_services(|service| {
+                services.insert(service);
+
+                Ok(())
+            })?;
+
+            info!("mDNS services changed, updating...");
+
+            self.update_services(matter, &services)?;
+
+            info!("mDNS services updated");
+        }
+    }
+
+    fn update_services(
+        &mut self,
+        matter: &Matter,
+        services: &HashSet<MatterMdnsService>,
+    ) -> Result<(), Error> {
+        for service in services {
+            if !self.services.contains_key(service) {
+                info!("Registering mDNS service: {service:?}");
+                let path = self.register(matter, service)?;
+                self.services.insert(service.clone(), path);
+            }
+        }
+
+        loop {
+            let removed = self
+                .services
+                .iter()
+                .find(|(service, _)| !services.contains(service))
+                .map(|(service, slot)| (service.clone(), *slot));
+
+            if let Some((service, slot)) = removed {
+                info!("Deregistering mDNS service: {service:?}");
+                self.deregister(slot)?;
+                self.services.remove(&service.clone());
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn register(
+        &mut self,
+        matter: &Matter,
+        service: &MatterMdnsService,
+    ) -> Result<SrpServiceSlot, Error> {
+        Service::call_with(service, matter.dev_det(), matter.port(), |service| {
+            let slot = self
+                .thread
+                .srp_add_service(&SrpService {
+                    name: service.service_protocol,
+                    instance_name: service.name,
+                    port: service.port,
+                    subtype_labels: service.service_subtypes.iter().cloned(),
+                    txt_entries: service
+                        .txt_kvs
+                        .iter()
+                        .cloned()
+                        .filter(|(k, _)| !k.is_empty())
+                        .map(|(k, v)| (k, v.as_bytes())),
+                    priority: 0,
+                    weight: 0,
+                    lease_secs: 0,
+                    key_lease_secs: 0,
+                })
+                .map_err(to_net_error)?;
+
+            Ok(slot)
+        })
+    }
+
+    fn deregister(&mut self, slot: SrpServiceSlot) -> Result<(), Error> {
+        self.thread
+            .srp_remove_service(slot, false)
+            .map_err(to_net_error)?;
+
+        Ok(())
+    }
+}
+
+impl<M> Mdns for EspMatterThreadSrp<'_, '_, M>
+where
+    M: NetifMode,
+{
+    async fn run<U>(
+        &mut self,
+        matter: &Matter<'_>,
+        _udp: U,
+        _mac: &[u8],
+        _ipv4: core::net::Ipv4Addr,
+        ipv6: core::net::Ipv6Addr,
+        _interface: u32,
+    ) -> Result<(), Error>
+    where
+        U: edge_nal::UdpBind,
+    {
+        Self::run(self, matter, ipv6).await
     }
 }
 

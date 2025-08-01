@@ -29,9 +29,11 @@ rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "next" }
 #edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
-esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc" }
+esp-idf-svc = { path = "../esp-idf-svc" }
+esp-idf-sys = { path = "../esp-idf-sys" }
+#esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc" }
 esp-idf-hal = { git = "https://github.com/esp-rs/esp-idf-hal" }
-esp-idf-sys = { git = "https://github.com/esp-rs/esp-idf-sys" }
+#esp-idf-sys = { git = "https://github.com/esp-rs/esp-idf-sys" }
 
 [profile.release]
 opt-level = "s"
@@ -76,6 +78,16 @@ path = "examples/light.rs"
 required-features = ["examples"]
 
 [[example]]
+name = "light_thread"
+path = "examples/light_thread.rs"
+required-features = ["examples"]
+
+[[example]]
 name = "light_eth"
 path = "examples/light_eth.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "light_eth2"
+path = "examples/light_eth2.rs"
 required-features = ["examples"]

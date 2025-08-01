@@ -60,15 +60,17 @@ where
     }
 
     fn load<MM: NetifMode>(&self, thread: &EspThread<'_, MM>) -> Result<(), EspError> {
-        self.netif_state.lock(|state| {
-            if state
-                .borrow_mut()
-                .load(Self::is_thread_connected(thread)?, thread.netif())?
-            {
-                self.netif_state_changed.notify();
-            }
+        thread.netif(|netif| {
+            self.netif_state.lock(|state| {
+                if state
+                    .borrow_mut()
+                    .load(Self::is_thread_connected(thread)?, netif)?
+                {
+                    self.netif_state_changed.notify();
+                }
 
-            Ok(())
+                Ok(())
+            })
         })
     }
 
@@ -216,19 +218,21 @@ where
         let connect_attempt_time = embassy_time::Instant::now();
 
         loop {
-            let operational = self
-                .netif_state
-                .lock(|state| {
-                    let mut state = state.borrow_mut();
+            let operational = thread.netif(|netif| {
+                self
+                    .netif_state
+                    .lock(|state| {
+                        let mut state = state.borrow_mut();
 
-                    let changed =
-                        state.load(Self::is_thread_connected(&*thread)?, thread.netif())?;
+                        let changed =
+                            state.load(Self::is_thread_connected(&*thread)?, netif)?;
 
-                    if changed {
-                        self.netif_state_changed.notify();
-                    }
+                        if changed {
+                            self.netif_state_changed.notify();
+                        }
 
-                    Result::<_, EspError>::Ok(!state.is_operational())
+                        Result::<_, EspError>::Ok(!state.is_operational())
+                    })
                 })
                 .map_err(to_net_error)?;
 

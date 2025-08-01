@@ -1,26 +1,6 @@
-# ![alt text](https://avatars.githubusercontent.com/u/61027988?s=48&v=4 "esp-idf-matter") Run [rs-matter](https://github.com/project-chip/rs-matter) on Espressif chips with [ESP-IDF](https://github.com/esp-rs/esp-idf-svc)
-
-[![CI](https://github.com/ivmarkov/esp-idf-matter/actions/workflows/ci.yml/badge.svg)](https://github.com/ivmarkov/esp-idf-matter/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/esp-idf-matter.svg)](https://crates.io/crates/esp-idf-matter)
-[![Documentation](https://img.shields.io/badge/docs-esp--rs-brightgreen)](https://ivmarkov.github.io/esp-idf-matter/esp_idf_matter/index.html)
-[![Matrix](https://img.shields.io/matrix/matter-rs:matrix.org?label=join%20matrix&color=BEC5C9&logo=matrix)](https://matrix.to/#/#matter-rs:matrix.org)
-
-## Overview
-
-Everything necessary to run [`rs-matter`](https://github.com/project-chip/rs-matter) on the ESP-IDF:
-* Bluedroid implementation of `rs-matter`'s `GattPeripheral` for BLE comissioning support.
-* [`rs-matter-stack`](https://github.com/ivmarkov/rs-matter-stack) support with `Netif`, `Ble`, `Wireless` (all of Wifi / Thread / Ethernet) and `KvBlobStore` implementations.
-
-Since ESP-IDF does support the Rust Standard Library, UDP networking just works.
-
-## Example
-
-(See also [All examples](#all-examples))
-
-```rust
-//! An example utilizing the `EspWifiMatterStack` struct.
+//! An example utilizing the `EspThreadMatterStack` struct.
 //!
-//! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
+//! As the name suggests, this Matter stack assembly uses Thread as the main transport,
 //! and thus BLE for commissioning.
 //!
 //! If you want to use Ethernet, utilize `EspEthMatterStack` instead.
@@ -47,15 +27,15 @@ use esp_idf_matter::matter::dm::{Async, Dataver, EmptyHandler, Endpoint, EpClMat
 use esp_idf_matter::matter::utils::init::InitMaybeUninit;
 use esp_idf_matter::matter::utils::select::Coalesce;
 use esp_idf_matter::matter::{clusters, devices};
-use esp_idf_matter::wireless::{EspMatterWifi, EspWifiMatterStack};
+use esp_idf_matter::wireless::{EspMatterThread, EspThreadMatterStack};
 
+use esp_idf_svc::bt::reduce_bt_memory;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::task::block_on;
 use esp_idf_svc::io::vfs::MountedEventfs;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::timer::EspTaskTimerService;
 
 use log::{error, info};
 
@@ -65,6 +45,8 @@ extern crate alloc;
 
 fn main() -> Result<(), anyhow::Error> {
     EspLogger::initialize_default();
+    // esp_idf_svc::log::init();
+    ::log::set_max_level(log::LevelFilter::Info);
 
     info!("Starting...");
 
@@ -72,7 +54,7 @@ fn main() -> Result<(), anyhow::Error> {
     // confused by the low priority of the ESP IDF main task
     // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
-        .stack_size(85 * 1024)
+        .stack_size(75 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -99,20 +81,25 @@ async fn matter() -> Result<(), anyhow::Error> {
     // as we'll run it in this thread
     let stack = MATTER_STACK
         .uninit()
-        .init_with(EspWifiMatterStack::init_default(
+        .init_with(EspThreadMatterStack::init_default(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));
 
+    info!("Matter initialized");
+
     // Take some generic ESP-IDF stuff we'll need later
     let sysloop = EspSystemEventLoop::take()?;
-    let timers = EspTaskTimerService::new()?;
     let nvs = EspDefaultNvsPartition::take()?;
-    let peripherals = Peripherals::take()?;
+    let mut peripherals = Peripherals::take()?;
 
-    let mounted_event_fs = Arc::new(MountedEventfs::mount(3)?);
-    init_async_io(mounted_event_fs)?;
+    let mounted_event_fs = Arc::new(MountedEventfs::mount(6)?);
+    init_async_io(mounted_event_fs.clone())?;
+
+    reduce_bt_memory(&mut peripherals.modem)?;
+
+    info!("Basics initialized");
 
     // Our "light" on-off handler.
     // Can be anything implementing `Handler` or `AsyncHandler`
@@ -133,6 +120,8 @@ async fn matter() -> Result<(), anyhow::Error> {
             Async(desc::DescHandler::new(Dataver::new_rand(stack.matter().rand())).adapt()),
         );
 
+    info!("Handler initialized");
+
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
@@ -143,8 +132,8 @@ async fn matter() -> Result<(), anyhow::Error> {
     // let store = stack.create_shared_store(esp_idf_matter::persist::EspKvBlobStore::new_default(nvs.clone())?);
     let store = stack.create_shared_store(rs_matter_stack::persist::DummyKvBlobStore);
     let mut matter = pin!(stack.run(
-        // The Matter stack needs the Wifi/BLE modem peripheral
-        EspMatterWifi::new_with_builtin_mdns(peripherals.modem, sysloop, timers, nvs, stack),
+        // The Matter stack needs the Thread/BLE modem peripheral
+        EspMatterThread::new(peripherals.modem, sysloop, nvs, mounted_event_fs, stack),
         // The Matter stack needs a persister to store its state
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl
@@ -152,6 +141,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         // No user future to run
         (),
     ));
+
+    info!("Async Matter task runner initialized");
 
     // Just for demoing purposes:
     //
@@ -174,7 +165,9 @@ async fn matter() -> Result<(), anyhow::Error> {
         }
     });
 
-    // Schedule the Matter run & the device loop together
+    info!("About to run Matter");
+
+    // // Schedule the Matter run & the device loop together
     select(&mut matter, &mut device).coalesce().await?;
 
     Ok(())
@@ -182,8 +175,8 @@ async fn matter() -> Result<(), anyhow::Error> {
 
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
-/// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: StaticCell<EspWifiMatterStack<()>> = StaticCell::new();
+/// It is also a mandatory requirement when the `ThreadBle` stack variation is used.
+static MATTER_STACK: StaticCell<EspThreadMatterStack<()>> = StaticCell::new();
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1
@@ -193,7 +186,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EspWifiMatterStack::<()>::root_endpoint(),
+        EspThreadMatterStack::<()>::root_endpoint(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -201,35 +194,3 @@ const NODE: Node = Node {
         },
     ],
 };
-```
-
-## Future
-
-* Device Attestation data support using secure flash storage
-* Setting system time via Matter
-* Matter OTA support based on the ESP-IDF OTA API
-
-## Build Prerequisites
-
-Follow the [Prerequisites](https://github.com/esp-rs/esp-idf-template#prerequisites) section in the `esp-idf-template` crate.
-
-## All examples
-
-The examples could be built and flashed conveniently with [`cargo-espflash`](https://github.com/esp-rs/espflash/). To run e.g. `light` on an e.g. ESP32-C3:
-(Swap the Rust target and example name with the target corresponding for your ESP32 MCU and with the example you would like to build)
-
-with `cargo-espflash`:
-```sh
-$ MCU=esp32c3 cargo espflash flash --target riscv32imc-esp-espidf --example light --features examples --monitor
-```
-
-| MCU | "--target" |
-| --- | ------ |
-| esp32c2 | riscv32imc-esp-espidf |
-| esp32c3| riscv32imc-esp-espidf |
-| esp32c6| riscv32imac-esp-espidf |
-| esp32h2 | riscv32imac-esp-espidf |
-| esp32p4 | riscv32imafc-esp-espidf |
-| esp32 | xtensa-esp32-espidf |
-| esp32s2 | xtensa-esp32s2-espidf |
-| esp32s3 | xtensa-esp32s3-espidf |

@@ -12,6 +12,7 @@ use crate::ble::EspBtpGattContext;
 #[cfg(all(
     esp_idf_comp_openthread_enabled,
     esp_idf_openthread_enabled,
+    esp_idf_soc_ieee802154_supported,
     esp_idf_comp_vfs_enabled,
 ))]
 pub use thread::*;
@@ -22,6 +23,7 @@ pub use wifi::*;
 #[cfg(all(
     esp_idf_comp_openthread_enabled,
     esp_idf_openthread_enabled,
+    esp_idf_soc_ieee802154_supported,
     esp_idf_comp_vfs_enabled,
 ))]
 mod thread;

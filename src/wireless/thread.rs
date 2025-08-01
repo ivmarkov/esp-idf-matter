@@ -9,17 +9,18 @@ use esp_idf_svc::io::vfs::MountedEventfs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::thread::EspThread;
 
+use log::info;
+
 use rs_matter_stack::matter::dm::networks::wireless::Thread;
 use rs_matter_stack::matter::error::Error;
 
-use rs_matter_stack::mdns::BuiltinMdns;
 use rs_matter_stack::network::{Embedding, Network};
 use rs_matter_stack::wireless::{Gatt, GattTask, ThreadCoex, ThreadCoexTask, ThreadTask};
 
 use crate::ble::{EspBtpGattContext, EspBtpGattPeripheral};
 use crate::error::to_net_error;
 use crate::netif::EspMatterNetStack;
-use crate::thread::{EspMatterThreadCtl, EspMatterThreadNotif};
+use crate::thread::{EspMatterThreadCtl, EspMatterThreadNotif, EspMatterThreadSrp};
 
 use super::{EspWirelessMatterStack, GATTS_APP_ID};
 
@@ -29,8 +30,6 @@ extern crate alloc;
 pub type EspThreadMatterStack<'a, E> = EspWirelessMatterStack<'a, Thread, E>;
 
 /// A `Thread` trait implementation via ESP-IDF's Thread/BT modem
-// TODO: mDNS via Thread (SRP)
-// TODO: How to run the openthread event loop
 pub struct EspMatterThread<'a, 'd> {
     modem: PeripheralRef<'d, Modem>,
     sysloop: EspSystemEventLoop,
@@ -99,7 +98,7 @@ impl rs_matter_stack::wireless::Thread for EspMatterThread<'_, '_> {
     where
         A: ThreadTask,
     {
-        let thread = EspThread::new(
+        let mut thread = EspThread::new(
             &mut self.modem,
             self.sysloop.clone(),
             self.nvs.clone(),
@@ -107,13 +106,23 @@ impl rs_matter_stack::wireless::Thread for EspMatterThread<'_, '_> {
         )
         .map_err(to_net_error)?;
 
-        let thread = EspMatterThreadCtl::new(thread, self.sysloop.clone());
+        thread.enable_ipv6(true).map_err(to_net_error)?;
+        thread.enable_thread(true).map_err(to_net_error)?;
+
+        info!("Thread stack created, about to start it");
+
+        thread.start().map_err(to_net_error)?;
+
+        info!("Thread stack started");
+
+        let net_ctl = EspMatterThreadCtl::new(&thread, self.sysloop.clone());
+        let mut mdns = EspMatterThreadSrp::new(&thread);
 
         task.run(
             EspMatterNetStack::new(),
-            EspMatterThreadNotif::new(&thread),
-            &thread,
-            BuiltinMdns, // TODO XXX FIXME
+            EspMatterThreadNotif::new(&net_ctl),
+            &net_ctl,
+            &mut mdns,
         )
         .await
     }
@@ -130,7 +139,7 @@ impl ThreadCoex for EspMatterThread<'_, '_> {
         #[cfg(esp32c6)]
         let (_, thread_p, bt_p) = self.modem.split_ref();
 
-        let thread = EspThread::new(
+        let mut thread = EspThread::new(
             thread_p,
             self.sysloop.clone(),
             self.nvs.clone(),
@@ -138,8 +147,17 @@ impl ThreadCoex for EspMatterThread<'_, '_> {
         )
         .map_err(to_net_error)?;
 
-        let thread = EspMatterThreadCtl::new(thread, self.sysloop.clone());
+        thread.enable_ipv6(true).map_err(to_net_error)?;
+        thread.enable_thread(true).map_err(to_net_error)?;
 
+        info!("Thread stack created, about to start it");
+
+        thread.start().map_err(to_net_error)?;
+
+        info!("Thread stack started");
+
+        let net_ctl = EspMatterThreadCtl::new(&thread, self.sysloop.clone());
+        let mut mdns = EspMatterThreadSrp::new(&thread);
         let bt = BtDriver::new(bt_p, Some(self.nvs.clone())).unwrap();
 
         let mut peripheral =
@@ -147,9 +165,9 @@ impl ThreadCoex for EspMatterThread<'_, '_> {
 
         task.run(
             EspMatterNetStack::new(),
-            EspMatterThreadNotif::new(&thread),
-            &thread,
-            BuiltinMdns, // TODO XXX FIXME
+            EspMatterThreadNotif::new(&net_ctl),
+            &net_ctl,
+            &mut mdns,
             &mut peripheral,
         )
         .await

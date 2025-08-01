@@ -71,11 +71,21 @@ static_cell = "2.1"
 anyhow = "1"
 
 [[example]]
-name = "light"
-path = "examples/light.rs"
+name = "light_wifi"
+path = "examples/light_wifi.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "light_thread"
+path = "examples/light_thread.rs"
 required-features = ["examples"]
 
 [[example]]
 name = "light_eth"
 path = "examples/light_eth.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "light_eth2"
+path = "examples/light_eth2.rs"
 required-features = ["examples"]

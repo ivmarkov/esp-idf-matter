@@ -10,12 +10,15 @@
 
 use core::pin::pin;
 
+use alloc::sync::Arc;
+
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
 use esp_idf_matter::eth::EspEthMatterStack;
 use esp_idf_matter::init_async_io;
 use esp_idf_matter::matter::dm::clusters::desc::{ClusterHandler as _, DescHandler};
+use esp_idf_matter::matter::dm::clusters::gen_diag::InterfaceTypeEnum;
 use esp_idf_matter::matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
 use esp_idf_matter::matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use esp_idf_matter::matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
@@ -29,6 +32,7 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::task::block_on;
 use esp_idf_svc::handle::RawHandle;
+use esp_idf_svc::io::vfs::MountedEventfs;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::{esp, esp_netif_create_ip6_linklocal};
@@ -39,6 +43,8 @@ use log::{error, info};
 
 use rs_matter_stack::mdns::BuiltinMdns;
 use static_cell::StaticCell;
+
+extern crate alloc;
 
 const WIFI_SSID: &str = env!("WIFI_SSID");
 const WIFI_PASS: &str = env!("WIFI_PASS");
@@ -53,12 +59,7 @@ fn main() -> Result<(), anyhow::Error> {
     // Also allocate a very large stack (for now) as `rs-matter` futures do occupy quite some space
     let thread = std::thread::Builder::new()
         .stack_size(70 * 1024)
-        .spawn(|| {
-            // Eagerly initialize `async-io` to minimize the risk of stack blowups later on
-            init_async_io()?;
-
-            run()
-        })
+        .spawn(run)
         .unwrap();
 
     thread.join().unwrap()
@@ -94,6 +95,9 @@ async fn matter() -> Result<(), anyhow::Error> {
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
     let peripherals = Peripherals::take()?;
+
+    let mounted_event_fs = Arc::new(MountedEventfs::mount(3)?);
+    init_async_io(mounted_event_fs)?;
 
     // Configure and start the Wifi first
     let mut wifi = Box::new(AsyncWifi::wrap(
@@ -148,8 +152,8 @@ async fn matter() -> Result<(), anyhow::Error> {
         // The Matter stack need access to the netif on which we'll operate
         // Since we are pretending to use a wired Ethernet connection - yet -
         // we are using a Wifi STA, provide the Wifi netif here
-        EspMatterNetif::new(wifi.wifi().sta_netif(), sysloop),
-        // The Matter stack needs a mDNS service to advertise itself
+        EspMatterNetif::new(wifi.wifi().sta_netif(), InterfaceTypeEnum::WiFi, sysloop),
+        // The Matter stack needs an mDNS service to advertise itself
         BuiltinMdns,
         // The Matter stack needs a persister to store its state
         &store,

@@ -1,23 +1,3 @@
-# ![alt text](https://avatars.githubusercontent.com/u/61027988?s=48&v=4 "esp-idf-matter") Run [rs-matter](https://github.com/project-chip/rs-matter) on Espressif chips with [ESP-IDF](https://github.com/esp-rs/esp-idf-svc)
-
-[![CI](https://github.com/ivmarkov/esp-idf-matter/actions/workflows/ci.yml/badge.svg)](https://github.com/ivmarkov/esp-idf-matter/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/esp-idf-matter.svg)](https://crates.io/crates/esp-idf-matter)
-[![Documentation](https://img.shields.io/badge/docs-esp--rs-brightgreen)](https://ivmarkov.github.io/esp-idf-matter/esp_idf_matter/index.html)
-[![Matrix](https://img.shields.io/matrix/matter-rs:matrix.org?label=join%20matrix&color=BEC5C9&logo=matrix)](https://matrix.to/#/#matter-rs:matrix.org)
-
-## Overview
-
-Everything necessary to run [`rs-matter`](https://github.com/project-chip/rs-matter) on the ESP-IDF:
-* Bluedroid implementation of `rs-matter`'s `GattPeripheral` for BLE comissioning support.
-* [`rs-matter-stack`](https://github.com/ivmarkov/rs-matter-stack) support with `Netif`, `Ble`, `Wireless` (all of Wifi / Thread / Ethernet) and `KvBlobStore` implementations.
-
-Since ESP-IDF does support the Rust Standard Library, UDP networking just works.
-
-## Example
-
-(See also [All examples](#all-examples))
-
-```rust
 //! An example utilizing the `EspWifiMatterStack` struct.
 //!
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
@@ -201,35 +181,3 @@ const NODE: Node = Node {
         },
     ],
 };
-```
-
-## Future
-
-* Device Attestation data support using secure flash storage
-* Setting system time via Matter
-* Matter OTA support based on the ESP-IDF OTA API
-
-## Build Prerequisites
-
-Follow the [Prerequisites](https://github.com/esp-rs/esp-idf-template#prerequisites) section in the `esp-idf-template` crate.
-
-## All examples
-
-The examples could be built and flashed conveniently with [`cargo-espflash`](https://github.com/esp-rs/espflash/). To run e.g. `light` on an e.g. ESP32-C3:
-(Swap the Rust target and example name with the target corresponding for your ESP32 MCU and with the example you would like to build)
-
-with `cargo-espflash`:
-```sh
-$ MCU=esp32c3 cargo espflash flash --target riscv32imc-esp-espidf --example light --features examples --monitor
-```
-
-| MCU | "--target" |
-| --- | ------ |
-| esp32c2 | riscv32imc-esp-espidf |
-| esp32c3| riscv32imc-esp-espidf |
-| esp32c6| riscv32imac-esp-espidf |
-| esp32h2 | riscv32imac-esp-espidf |
-| esp32p4 | riscv32imafc-esp-espidf |
-| esp32 | xtensa-esp32-espidf |
-| esp32s2 | xtensa-esp32s2-espidf |
-| esp32s3 | xtensa-esp32s3-espidf |

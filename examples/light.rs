@@ -25,7 +25,7 @@ use esp_idf_matter::matter::dm::{Async, Dataver, EmptyHandler, Endpoint, EpClMat
 use esp_idf_matter::matter::utils::init::InitMaybeUninit;
 use esp_idf_matter::matter::utils::select::Coalesce;
 use esp_idf_matter::matter::{clusters, devices};
-use esp_idf_matter::wireless::{EspMatterThread, EspWifiMatterStack};
+use esp_idf_matter::wireless::{EspMatterWifi, EspWifiMatterStack};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -121,7 +121,7 @@ async fn matter() -> Result<(), anyhow::Error> {
     let store = stack.create_shared_store(rs_matter_stack::persist::DummyKvBlobStore);
     let mut matter = pin!(stack.run(
         // The Matter stack needs the Wifi/BLE modem peripheral
-        EspMatterThread::new_with_builtin_mdns(peripherals.modem, sysloop, timers, nvs, stack),
+        EspMatterWifi::new_with_builtin_mdns(peripherals.modem, sysloop, timers, nvs, stack),
         // The Matter stack needs a persister to store its state
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl

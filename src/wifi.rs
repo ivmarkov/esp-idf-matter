@@ -16,6 +16,7 @@ use esp_idf_svc::wifi::{
     AsyncWifi, AuthMethod, ClientConfiguration, Configuration::Client, EspWifi,
 };
 
+use rs_matter_stack::matter::dm::clusters::decl::general_diagnostics::InterfaceTypeEnum;
 use rs_matter_stack::matter::dm::clusters::gen_diag::{NetifDiag, NetifInfo};
 use rs_matter_stack::matter::dm::clusters::net_comm::{
     NetCtl, NetCtlError, NetworkScanInfo, NetworkType, WirelessCreds,
@@ -57,10 +58,11 @@ impl<'a> EspMatterWifiCtl<'a> {
 
     fn load(&self, wifi: &EspWifi<'_>) -> Result<(), EspError> {
         self.netif_state.lock(|state| {
-            if state
-                .borrow_mut()
-                .load(wifi.is_connected()?, wifi.sta_netif())?
-            {
+            if state.borrow_mut().load(
+                wifi.is_connected()?,
+                wifi.sta_netif(),
+                InterfaceTypeEnum::WiFi,
+            )? {
                 self.netif_state_changed.notify();
             }
 
@@ -188,8 +190,11 @@ impl NetCtl for EspMatterWifiCtl<'_> {
                 self.netif_state.lock(|state| {
                     let mut state = state.borrow_mut();
 
-                    let changed =
-                        state.load(wifi.wifi().is_connected()?, wifi.wifi().sta_netif())?;
+                    let changed = state.load(
+                        wifi.wifi().is_connected()?,
+                        wifi.wifi().sta_netif(),
+                        InterfaceTypeEnum::WiFi,
+                    )?;
 
                     if changed {
                         self.netif_state_changed.notify();

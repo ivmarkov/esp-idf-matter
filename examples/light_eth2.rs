@@ -7,6 +7,7 @@
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 #![allow(unexpected_cfgs)]
+#![recursion_limit = "256"]
 
 fn main() -> Result<(), anyhow::Error> {
     #[cfg(any(esp32c6, esp32h2))]
